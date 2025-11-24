@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useContext } from 'react';
 import { 
   View, Text, StyleSheet, ScrollView, RefreshControl, 
   SafeAreaView, StatusBar, Dimensions, ActivityIndicator 
@@ -8,17 +8,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { getDashboardStats } from '../services/dashboardService';
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
 import { useFocusEffect } from '@react-navigation/native';
+import { AuthContext } from '../context/AuthContext'; // Context Eklendi
 
 const screenWidth = Dimensions.get('window').width;
 
 export default function DashboardScreen() {
+  const { user, userProfile } = useContext(AuthContext); // Kullanıcıyı al
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchStats = async () => {
+    if (!user || !userProfile) return;
     try {
-      const data = await getDashboardStats();
+      // Servise ID ve Rol gönderiyoruz
+      const data = await getDashboardStats(user.uid, userProfile.role);
       setStats(data);
     } catch (error) {
       console.error(error);
@@ -31,7 +35,7 @@ export default function DashboardScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchStats();
-    }, [])
+    }, [user, userProfile])
   );
 
   const onRefresh = () => {
@@ -47,24 +51,38 @@ export default function DashboardScreen() {
     );
   }
 
-  const occupancyRate = stats?.totalPotentialIncome > 0 
-    ? Math.round((stats.currentMonthIncome / stats.totalPotentialIncome) * 100) 
+  // ROL BAZLI UI AYARLARI
+  const isOwner = userProfile?.role === 'OWNER';
+  
+  // Owner ise Gelir/Potansiyel, Tenant ise Harcama/İşlem Sayısı
+  const mainCardTitle = isOwner ? "Bu Ay Gelir" : "Bu Ay Harcama";
+  const mainCardIcon = isOwner ? "wallet" : "card"; // Wallet gelir, Card harcama gibi
+  const secondaryCardTitle = isOwner ? "Potansiyel Ciro" : "İşlem Sayısı";
+  
+  // Potansiyel sadece Owner'da var. Tenant için İşlem sayısı gösterelim
+  const secondaryValue = isOwner 
+    ? `${stats?.totalPotentialIncome.toLocaleString('tr-TR')} ₺`
+    : `${stats?.thisMonthCount} Adet`;
+
+  // Doluluk oranı sadece Owner için anlamlı
+  const occupancyRate = (isOwner && stats?.totalPotentialIncome > 0)
+    ? Math.round((stats.currentMonthTotal / stats.totalPotentialIncome) * 100) 
     : 0;
 
-  // --- Trend Mesajını Hesapla ---
+  // Trend Mesajı
   const diff = (stats?.thisMonthCount || 0) - (stats?.lastMonthCount || 0);
   let trendMessage = "Geçen ayla aynı seviyede.";
   let trendIcon = "remove-circle";
   let trendColor = COLORS.primary;
 
   if (diff > 0) {
-    trendMessage = `Geçen aya göre ${diff} adet daha fazla kiralama yapıldı!`;
+    trendMessage = `Geçen aya göre ${diff} adet daha fazla işlem! 🚀`;
     trendIcon = "trending-up";
     trendColor = COLORS.success;
   } else if (diff < 0) {
     trendMessage = `Geçen aya göre ${Math.abs(diff)} adet düşüş var.`;
     trendIcon = "trending-down";
-    trendColor = COLORS.warning; // Turuncu
+    trendColor = COLORS.warning;
   }
 
   return (
@@ -72,8 +90,10 @@ export default function DashboardScreen() {
       <StatusBar barStyle="dark-content" />
       
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Özet Durum</Text>
-        <Text style={styles.headerSubtitle}>Bu ayın performans raporu</Text>
+        <Text style={styles.headerTitle}>Merhaba, {userProfile?.fullName}</Text>
+        <Text style={styles.headerSubtitle}>
+            {isOwner ? 'İşlerinin genel durumu' : 'Kiralama özetin'}
+        </Text>
       </View>
 
       <ScrollView 
@@ -83,36 +103,41 @@ export default function DashboardScreen() {
         
         {/* --- 1. ÖZET KARTLAR --- */}
         <View style={styles.statsGrid}>
-          {/* Sol: Gelir */}
+          {/* Ana Kart (Gelir/Gider) */}
           <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
             <View style={styles.iconCircleLight}>
-              <Ionicons name="wallet" size={24} color={COLORS.primary} />
+              <Ionicons name={mainCardIcon} size={24} color={COLORS.primary} />
             </View>
-            <Text style={styles.statLabelLight}>Bu Ay Gelir</Text>
-            <Text style={styles.statValueLight}>{stats?.currentMonthIncome.toLocaleString('tr-TR')} ₺</Text>
-            <Text style={{color:'rgba(255,255,255,0.7)', fontSize:11, marginTop:4}}>
-              %{occupancyRate} Verim
-            </Text>
+            <Text style={styles.statLabelLight}>{mainCardTitle}</Text>
+            <Text style={styles.statValueLight}>{stats?.currentMonthTotal.toLocaleString('tr-TR')} ₺</Text>
+            
+            {isOwner && (
+                <Text style={{color:'rgba(255,255,255,0.7)', fontSize:11, marginTop:4}}>
+                %{occupancyRate} Doluluk
+                </Text>
+            )}
           </View>
 
-          {/* Sağ: Potansiyel */}
+          {/* İkincil Kart (Potansiyel/Adet) */}
           <View style={[styles.statCard, { backgroundColor: '#fff' }]}>
-             <View style={[styles.iconCircle, { backgroundColor: '#F3E5F5' }]}> 
-              <Ionicons name="bar-chart" size={24} color={COLORS.secondary} />
+             <View style={[styles.iconCircle, { backgroundColor: isOwner ? '#F3E5F5' : '#FFF3E0' }]}> 
+              <Ionicons name={isOwner ? "bar-chart" : "receipt"} size={24} color={isOwner ? COLORS.secondary : COLORS.warning} />
             </View>
-            <Text style={styles.statLabel}>Potansiyel Ciro</Text>
-            <Text style={[styles.statValue, { color: COLORS.secondary }]}>
-              {stats?.totalPotentialIncome.toLocaleString('tr-TR')} ₺
+            <Text style={styles.statLabel}>{secondaryCardTitle}</Text>
+            <Text style={[styles.statValue, { color: isOwner ? COLORS.secondary : COLORS.warning }]}>
+              {secondaryValue}
             </Text>
             <Text style={{color:COLORS.textLight, fontSize:11, marginTop:4}}>
-              Tam kapasite hedefi
+              {isOwner ? 'Tam kapasite hedefi' : 'Bu ay yapılan kiralama'}
             </Text>
           </View>
         </View>
 
         {/* --- 2. GRAFİK --- */}
         <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Gelir Trendi (Son 6 Ay)</Text>
+          <Text style={styles.chartTitle}>
+            {isOwner ? 'Gelir Trendi (Son 6 Ay)' : 'Harcama Geçmişi (Son 6 Ay)'}
+          </Text>
           {stats?.chartData && (
             <LineChart
               data={stats.chartData}
@@ -136,18 +161,12 @@ export default function DashboardScreen() {
           )}
         </View>
 
-        {/* --- 3. BİLGİ & TREND KARTI (YENİ) --- */}
+        {/* --- 3. BİLGİ KARTI --- */}
         <View style={[styles.infoCard, { borderLeftColor: trendColor, backgroundColor: diff > 0 ? '#E8F5E9' : (diff < 0 ? '#FFF3E0' : '#E3F2FD') }]}>
           <Ionicons name={trendIcon} size={32} color={trendColor} style={{ marginRight: 12 }} />
           <View style={{flex:1}}>
-            <Text style={styles.infoTitle}>Hareketlilik Raporu</Text>
+            <Text style={styles.infoTitle}>Hareketlilik</Text>
             <Text style={styles.infoText}>{trendMessage}</Text>
-            
-            {/* Alt Bilgi (Potansiyel Açıklaması) - Daha küçük */}
-            <View style={styles.divider} />
-            <Text style={styles.subInfoText}>
-              * Potansiyel ciro, bu ay tüm günlerin dolu olduğu senaryoyu baz alır.
-            </Text>
           </View>
         </View>
 
@@ -161,7 +180,7 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   
   header: { padding: LAYOUT.padding, paddingBottom: 10, backgroundColor: COLORS.background },
-  headerTitle: { fontSize: 28, fontWeight: '700', color: COLORS.textDark },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: COLORS.textDark },
   headerSubtitle: { fontSize: 14, color: COLORS.textLight, marginTop: 4 },
 
   scrollContent: { padding: LAYOUT.padding },
@@ -192,13 +211,10 @@ const styles = StyleSheet.create({
   },
   chartTitle: { fontSize: 18, fontWeight: '600', color: COLORS.textDark, marginBottom: 10 },
 
-  // Yeni Bilgi Kartı Stilleri
   infoCard: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#E8F5E9',
     padding: 16, borderRadius: 12, borderLeftWidth: 6
   },
   infoTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textDark },
-  infoText: { fontSize: 15, color: COLORS.textDark, marginTop: 4, fontWeight: '500' },
-  divider: { height: 1, backgroundColor: 'rgba(0,0,0,0.05)', marginVertical: 8 },
-  subInfoText: { fontSize: 11, color: COLORS.textLight, fontStyle: 'italic' }
+  infoText: { fontSize: 15, color: COLORS.textDark, marginTop: 4, fontWeight: '500' }
 });

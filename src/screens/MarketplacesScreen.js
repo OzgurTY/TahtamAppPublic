@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { 
   View, Text, FlatList, TouchableOpacity, Modal, 
   TextInput, StyleSheet, Alert, SafeAreaView, StatusBar 
 } from 'react-native';
 import { subscribeToMarketplaces, addMarketplace, deleteMarketplace, updateMarketplace } from '../services/marketplaceService';
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
+import { AuthContext } from '../context/AuthContext'; // Context eklendi
 
 const DAYS = [
   { id: 'MONDAY', label: 'Pzt' },
@@ -16,7 +17,10 @@ const DAYS = [
   { id: 'SUNDAY', label: 'Paz' },
 ];
 
-export default function MarketplacesScreen() {
+export default function MarketplacesScreen({ navigation }) {
+  const { userProfile } = useContext(AuthContext); // Kullanıcı rolünü al
+  const isAdmin = userProfile?.role === 'ADMIN'; // Sadece Admin yetkili
+
   const [marketplaces, setMarketplaces] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -47,6 +51,9 @@ export default function MarketplacesScreen() {
   };
 
   const handleDelete = (item) => {
+    // Sadece Admin silebilir
+    if (!isAdmin) return;
+
     Alert.alert('Sil', `"${item.name}" silinsin mi?`, [
       { text: 'İptal', style: 'cancel' },
       { text: 'Sil', style: 'destructive', onPress: () => deleteMarketplace(item.id) }
@@ -54,6 +61,9 @@ export default function MarketplacesScreen() {
   };
 
   const openEdit = (item) => {
+    // Sadece Admin düzenleyebilir
+    if (!isAdmin) return;
+
     setName(item.name);
     setAddress(item.address);
     setSelectedDays(item.openDays || []);
@@ -77,7 +87,22 @@ export default function MarketplacesScreen() {
   };
 
   const renderItem = ({ item }) => (
-    <TouchableOpacity style={styles.card} onLongPress={() => handleDelete(item)} onPress={() => openEdit(item)}>
+    <TouchableOpacity 
+      style={styles.card} 
+      // Admin: Uzun basınca siler, tıklayınca düzenler.
+      // Diğerleri (Owner/Tenant): Tıklayınca o pazarın tahtalarına gider.
+      onLongPress={isAdmin ? () => handleDelete(item) : null} 
+      onPress={() => {
+        if (isAdmin) {
+          openEdit(item);
+        } else {
+          // Pazarın ID'sini parametre olarak gönderiyoruz
+          navigation.navigate('Stalls', { marketId: item.id });
+        }
+      }}
+      activeOpacity={0.7}
+    >
+      {/* ... (Kart içeriği aynı) ... */}
       <View>
         <Text style={styles.cardTitle}>{item.name}</Text>
         <Text style={styles.cardAddress}>{item.address}</Text>
@@ -97,9 +122,13 @@ export default function MarketplacesScreen() {
       <StatusBar barStyle="dark-content" />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Pazaryerleri</Text>
-        <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
-          <Text style={styles.addButtonText}>+ Ekle</Text>
-        </TouchableOpacity>
+        
+        {/* KURAL 1: Sadece Admin EKLE butonunu görür */}
+        {isAdmin && (
+          <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
+            <Text style={styles.addButtonText}>+ Ekle</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <FlatList
@@ -110,6 +139,7 @@ export default function MarketplacesScreen() {
         ListEmptyComponent={<Text style={styles.emptyText}>Henüz pazaryeri eklenmemiş.</Text>}
       />
 
+      {/* Modal sadece Admin erişiminde anlamlıdır, state zaten butonla kontrol ediliyor */}
       <Modal visible={modalVisible} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
