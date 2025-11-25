@@ -4,7 +4,7 @@ import {
   SafeAreaView, ScrollView, KeyboardAvoidingView, Platform 
 } from 'react-native';
 import { registerUser } from '../../services/authService';
-import { COLORS, LAYOUT, SHADOWS } from '../../styles/theme';
+import { COLORS, SHADOWS } from '../../styles/theme';
 
 export default function RegisterScreen({ navigation }) {
   const [role, setRole] = useState('TENANT'); 
@@ -12,7 +12,6 @@ export default function RegisterScreen({ navigation }) {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  // IBAN state'i kaldırıldı
 
   const handleRegister = async () => {
     if (!email || !password || !fullName) {
@@ -24,7 +23,6 @@ export default function RegisterScreen({ navigation }) {
         fullName,
         phone,
         role, 
-        // IBAN artık burada gönderilmiyor
       };
       
       await registerUser(email, password, userData);
@@ -36,10 +34,17 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex:1}}>
-        <ScrollView contentContainerStyle={styles.content}>
+      {/* KLAVYE DÜZELTMESİ */}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === "ios" ? "padding" : "height"} 
+        style={{ flex: 1 }}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.title}>Aramıza Katıl</Text>
-          <Text style={styles.subtitle}>Tahtam ile pazar yerini yönet.</Text>
+          <Text style={styles.subtitle}>TahtamApp ile pazar yerini yönet.</Text>
 
           {/* ROL SEÇİMİ */}
           <View style={styles.roleContainer}>
@@ -57,11 +62,35 @@ export default function RegisterScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
-          <TextInput style={styles.input} placeholder="Ad Soyad" value={fullName} onChangeText={setFullName} />
-          <TextInput style={styles.input} placeholder="Telefon" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+          <TextInput 
+            style={styles.input} 
+            placeholder="Ad Soyad" 
+            value={fullName} 
+            onChangeText={setFullName} 
+          />
+          <TextInput 
+            style={styles.input} 
+            placeholder="Telefon" 
+            value={phone} 
+            onChangeText={setPhone} 
+            keyboardType="phone-pad" 
+          />
           
-          <TextInput style={styles.input} placeholder="E-posta" value={email} onChangeText={setEmail} autoCapitalize="none" />
-          <TextInput style={styles.input} placeholder="Şifre" value={password} onChangeText={setPassword} secureTextEntry />
+          <TextInput 
+            style={styles.input} 
+            placeholder="E-posta" 
+            value={email} 
+            onChangeText={setEmail} 
+            autoCapitalize="none" 
+            keyboardType="email-address"
+          />
+          <TextInput 
+            style={styles.input} 
+            placeholder="Şifre" 
+            value={password} 
+            onChangeText={setPassword} 
+            secureTextEntry 
+          />
 
           <TouchableOpacity style={styles.btn} onPress={handleRegister}>
             <Text style={styles.btnText}>Kayıt Ol</Text>
@@ -79,7 +108,14 @@ export default function RegisterScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 30, justifyContent: 'center', minHeight: '100%' },
+  
+  // İçeriği dikeyde ortalamak ve kaydırmak için
+  scrollContent: { 
+    flexGrow: 1, 
+    justifyContent: 'center', 
+    padding: 30 
+  },
+  
   title: { fontSize: 32, fontWeight: 'bold', color: COLORS.primary, marginBottom: 10 },
   subtitle: { fontSize: 16, color: COLORS.textLight, marginBottom: 30 },
   

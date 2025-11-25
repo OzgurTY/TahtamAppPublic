@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { 
   View, Text, FlatList, TouchableOpacity, Modal, 
-  TextInput, StyleSheet, Alert, SafeAreaView, StatusBar 
+  TextInput, StyleSheet, Alert, SafeAreaView, StatusBar,
+  KeyboardAvoidingView, Platform, ScrollView // YENİ EKLENDİ
 } from 'react-native';
 import { subscribeToMarketplaces, addMarketplace, deleteMarketplace, updateMarketplace } from '../services/marketplaceService';
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
-import { AuthContext } from '../context/AuthContext'; // Context eklendi
+import { AuthContext } from '../context/AuthContext';
 
 const DAYS = [
   { id: 'MONDAY', label: 'Pzt' },
@@ -18,8 +19,8 @@ const DAYS = [
 ];
 
 export default function MarketplacesScreen({ navigation }) {
-  const { userProfile } = useContext(AuthContext); // Kullanıcı rolünü al
-  const isAdmin = userProfile?.role === 'ADMIN'; // Sadece Admin yetkili
+  const { userProfile } = useContext(AuthContext);
+  const isAdmin = userProfile?.role === 'ADMIN';
 
   const [marketplaces, setMarketplaces] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -51,9 +52,7 @@ export default function MarketplacesScreen({ navigation }) {
   };
 
   const handleDelete = (item) => {
-    // Sadece Admin silebilir
     if (!isAdmin) return;
-
     Alert.alert('Sil', `"${item.name}" silinsin mi?`, [
       { text: 'İptal', style: 'cancel' },
       { text: 'Sil', style: 'destructive', onPress: () => deleteMarketplace(item.id) }
@@ -61,9 +60,7 @@ export default function MarketplacesScreen({ navigation }) {
   };
 
   const openEdit = (item) => {
-    // Sadece Admin düzenleyebilir
     if (!isAdmin) return;
-
     setName(item.name);
     setAddress(item.address);
     setSelectedDays(item.openDays || []);
@@ -89,20 +86,16 @@ export default function MarketplacesScreen({ navigation }) {
   const renderItem = ({ item }) => (
     <TouchableOpacity 
       style={styles.card} 
-      // Admin: Uzun basınca siler, tıklayınca düzenler.
-      // Diğerleri (Owner/Tenant): Tıklayınca o pazarın tahtalarına gider.
       onLongPress={isAdmin ? () => handleDelete(item) : null} 
       onPress={() => {
         if (isAdmin) {
           openEdit(item);
         } else {
-          // Pazarın ID'sini parametre olarak gönderiyoruz
           navigation.navigate('Stalls', { marketId: item.id });
         }
       }}
       activeOpacity={0.7}
     >
-      {/* ... (Kart içeriği aynı) ... */}
       <View>
         <Text style={styles.cardTitle}>{item.name}</Text>
         <Text style={styles.cardAddress}>{item.address}</Text>
@@ -122,8 +115,6 @@ export default function MarketplacesScreen({ navigation }) {
       <StatusBar barStyle="dark-content" />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Pazaryerleri</Text>
-        
-        {/* KURAL 1: Sadece Admin EKLE butonunu görür */}
         {isAdmin && (
           <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
             <Text style={styles.addButtonText}>+ Ekle</Text>
@@ -139,51 +130,58 @@ export default function MarketplacesScreen({ navigation }) {
         ListEmptyComponent={<Text style={styles.emptyText}>Henüz pazaryeri eklenmemiş.</Text>}
       />
 
-      {/* Modal sadece Admin erişiminde anlamlıdır, state zaten butonla kontrol ediliyor */}
+      {/* KLAVYE DÜZELTMESİ EKLENEN MODAL */}
       <Modal visible={modalVisible} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>{isEditing ? 'Düzenle' : 'Yeni Pazaryeri'}</Text>
-            
-            <TextInput 
-              style={styles.input} 
-              placeholder="Pazar Adı (Örn: Ulus Pazarı)" 
-              placeholderTextColor={COLORS.textLight}
-              value={name} 
-              onChangeText={setName} 
-            />
-            
-            <TextInput 
-              style={styles.input} 
-              placeholder="Adres (Örn: İsmetpaşa Mah.)" 
-              placeholderTextColor={COLORS.textLight}
-              value={address} 
-              onChangeText={setAddress} 
-            />
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <Text style={styles.modalTitle}>{isEditing ? 'Düzenle' : 'Yeni Pazaryeri'}</Text>
+                
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="Pazar Adı (Örn: Ulus Pazarı)" 
+                  placeholderTextColor={COLORS.textLight}
+                  value={name} 
+                  onChangeText={setName} 
+                />
+                
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="Adres (Örn: İsmetpaşa Mah.)" 
+                  placeholderTextColor={COLORS.textLight}
+                  value={address} 
+                  onChangeText={setAddress} 
+                />
 
-            <Text style={styles.label}>Açık Günler:</Text>
-            <View style={styles.daySelectContainer}>
-              {DAYS.map(day => (
-                <TouchableOpacity 
-                  key={day.id} 
-                  style={[styles.daySelectBtn, selectedDays.includes(day.id) && styles.daySelectBtnActive]}
-                  onPress={() => toggleDay(day.id)}
-                >
-                  <Text style={[styles.daySelectText, selectedDays.includes(day.id) && styles.daySelectTextActive]}>{day.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                <Text style={styles.label}>Açık Günler:</Text>
+                <View style={styles.daySelectContainer}>
+                  {DAYS.map(day => (
+                    <TouchableOpacity 
+                      key={day.id} 
+                      style={[styles.daySelectBtn, selectedDays.includes(day.id) && styles.daySelectBtnActive]}
+                      onPress={() => toggleDay(day.id)}
+                    >
+                      <Text style={[styles.daySelectText, selectedDays.includes(day.id) && styles.daySelectTextActive]}>{day.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
-                <Text style={styles.cancelBtnText}>İptal</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-                <Text style={styles.saveBtnText}>{isEditing ? 'Güncelle' : 'Kaydet'}</Text>
-              </TouchableOpacity>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
+                    <Text style={styles.cancelBtnText}>İptal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+                    <Text style={styles.saveBtnText}>{isEditing ? 'Güncelle' : 'Kaydet'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -208,7 +206,7 @@ const styles = StyleSheet.create({
   dayTextInactive: { color: '#C6C6C8' },
   emptyText: { textAlign: 'center', marginTop: 40, color: COLORS.textLight },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
-  modalContainer: { backgroundColor: '#fff', borderRadius: 16, padding: 20 },
+  modalContainer: { backgroundColor: '#fff', borderRadius: 16, padding: 20, maxHeight: '80%' }, // MaxHeight eklendi
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
   input: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 16, color: COLORS.textDark },
   label: { fontSize: 14, fontWeight: '600', marginBottom: 8, color: COLORS.textLight },

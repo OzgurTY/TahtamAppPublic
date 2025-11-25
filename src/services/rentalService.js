@@ -10,13 +10,21 @@ const RENTALS_COLLECTION = 'rentals';
 export const subscribeToRentalsByRole = (userId, role, callback) => {
   let q;
 
-  if (role === 'OWNER') {
+  if (role === 'ADMIN') {
+    // ADMIN: Hiçbir filtre yok, tüm geçmişi görür
+    q = query(
+      collection(db, RENTALS_COLLECTION),
+      orderBy('date', 'desc')
+    );
+  } else if (role === 'OWNER') {
+    // OWNER: Sadece kendi mülklerinin kirasını görür
     q = query(
       collection(db, RENTALS_COLLECTION),
       where('ownerId', '==', userId),
       orderBy('date', 'desc')
     );
   } else {
+    // TENANT: Sadece kendi ödemelerini görür
     q = query(
       collection(db, RENTALS_COLLECTION),
       where('tenantId', '==', userId),
@@ -41,12 +49,8 @@ export const subscribeToRentalsByDate = (marketId, dateString, callback) => {
     where('marketplaceId', '==', marketId),
     where('dateString', '==', dateString)
   );
-
   return onSnapshot(q, (snapshot) => {
-    const data = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     callback(data);
   });
 };
@@ -54,16 +58,10 @@ export const subscribeToRentalsByDate = (marketId, dateString, callback) => {
 // Kiralama Yap (Batch)
 export const createRental = async (rentalsDataArray) => {
   const batch = writeBatch(db);
-
   rentalsDataArray.forEach(rental => {
     const docRef = doc(collection(db, RENTALS_COLLECTION));
-    batch.set(docRef, {
-      ...rental,
-      createdAt: new Date(),
-      isPaid: false
-    });
+    batch.set(docRef, { ...rental, createdAt: new Date(), isPaid: false });
   });
-
   await batch.commit();
 };
 
@@ -72,35 +70,24 @@ export const deleteRental = async (rentalId) => {
   await deleteDoc(ref);
 };
 
-// Ödeme Durumu Güncelle
 export const toggleRentalPaymentStatus = async (rentalId, currentStatus) => {
   const ref = doc(db, RENTALS_COLLECTION, rentalId);
   await updateDoc(ref, { isPaid: !currentStatus });
 };
 
-// ÇAKIŞMA KONTROLÜ (Müsaitlik Hatasını Çözer)
 export const checkAvailability = async (stallId, dateStrings) => {
   if (!dateStrings || dateStrings.length === 0) return [];
-
-  // Tarihleri sırala
   const sortedDates = [...dateStrings].sort();
   const startDate = sortedDates[0];
   const endDate = sortedDates[sortedDates.length - 1];
-
-  // O aralıktaki tüm kayıtları çek
   const q = query(
     collection(db, RENTALS_COLLECTION),
     where('stallId', '==', stallId),
     where('dateString', '>=', startDate),
     where('dateString', '<=', endDate)
   );
-
-  const snapshot = await getDocs(q); // getDocs artık import edildiği için çalışacak
-  
+  const snapshot = await getDocs(q);
   const existingRentals = snapshot.docs.map(doc => doc.data().dateString);
-  
-  // Çakışanları bul
   const conflicts = existingRentals.filter(date => dateStrings.includes(date));
-
   return conflicts; 
 };

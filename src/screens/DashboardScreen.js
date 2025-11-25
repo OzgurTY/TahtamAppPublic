@@ -8,20 +8,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { getDashboardStats } from '../services/dashboardService';
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
 import { useFocusEffect } from '@react-navigation/native';
-import { AuthContext } from '../context/AuthContext'; // Context Eklendi
+import { AuthContext } from '../context/AuthContext';
 
 const screenWidth = Dimensions.get('window').width;
 
 export default function DashboardScreen() {
-  const { user, userProfile } = useContext(AuthContext); // Kullanıcıyı al
+  const { user, userProfile } = useContext(AuthContext);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const isAdmin = userProfile?.role === 'ADMIN';
+  const isOwner = userProfile?.role === 'OWNER';
+
   const fetchStats = async () => {
     if (!user || !userProfile) return;
     try {
-      // Servise ID ve Rol gönderiyoruz
       const data = await getDashboardStats(user.uid, userProfile.role);
       setStats(data);
     } catch (error) {
@@ -51,25 +53,16 @@ export default function DashboardScreen() {
     );
   }
 
-  // ROL BAZLI UI AYARLARI
-  const isOwner = userProfile?.role === 'OWNER';
+  // --- ROL BAZLI ETİKETLER ---
+  const mainCardTitle = isOwner ? "Bu Ay Gelir" : (isAdmin ? "Bu Ay Platform Cirosu" : "Bu Ay Harcama");
+  const mainCardIcon = isOwner || isAdmin ? "wallet" : "card";
   
-  // Owner ise Gelir/Potansiyel, Tenant ise Harcama/İşlem Sayısı
-  const mainCardTitle = isOwner ? "Bu Ay Gelir" : "Bu Ay Harcama";
-  const mainCardIcon = isOwner ? "wallet" : "card"; // Wallet gelir, Card harcama gibi
   const secondaryCardTitle = isOwner ? "Potansiyel Ciro" : "İşlem Sayısı";
-  
-  // Potansiyel sadece Owner'da var. Tenant için İşlem sayısı gösterelim
   const secondaryValue = isOwner 
-    ? `${stats?.totalPotentialIncome.toLocaleString('tr-TR')} ₺`
-    : `${stats?.thisMonthCount} Adet`;
+    ? `${stats?.totalPotentialIncome?.toLocaleString('tr-TR') || 0} ₺`
+    : `${stats?.thisMonthCount || 0} Adet`;
 
-  // Doluluk oranı sadece Owner için anlamlı
-  const occupancyRate = (isOwner && stats?.totalPotentialIncome > 0)
-    ? Math.round((stats.currentMonthTotal / stats.totalPotentialIncome) * 100) 
-    : 0;
-
-  // Trend Mesajı
+  // Trend
   const diff = (stats?.thisMonthCount || 0) - (stats?.lastMonthCount || 0);
   let trendMessage = "Geçen ayla aynı seviyede.";
   let trendIcon = "remove-circle";
@@ -92,7 +85,7 @@ export default function DashboardScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Merhaba, {userProfile?.fullName}</Text>
         <Text style={styles.headerSubtitle}>
-            {isOwner ? 'İşlerinin genel durumu' : 'Kiralama özetin'}
+            {isAdmin ? 'Yönetici Paneli & Sistem Özeti' : (isOwner ? 'İşlerinin genel durumu' : 'Kiralama özetin')}
         </Text>
       </View>
 
@@ -101,24 +94,42 @@ export default function DashboardScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         
-        {/* --- 1. ÖZET KARTLAR --- */}
+        {/* --- ADMIN ÖZEL İSTATİSTİK PANELİ --- */}
+        {isAdmin && (
+          <View style={styles.adminGrid}>
+            <View style={styles.adminCard}>
+                <Text style={styles.adminCardLabel}>Kullanıcılar</Text>
+                <Text style={styles.adminCardValue}>{stats?.totalUsers}</Text>
+                <Ionicons name="people" size={16} color={COLORS.primary} style={styles.adminIcon} />
+            </View>
+            <View style={styles.adminCard}>
+                <Text style={styles.adminCardLabel}>Pazaryerleri</Text>
+                <Text style={styles.adminCardValue}>{stats?.totalMarketplaces}</Text>
+                <Ionicons name="storefront" size={16} color={COLORS.secondary} style={styles.adminIcon} />
+            </View>
+            <View style={styles.adminCard}>
+                <Text style={styles.adminCardLabel}>Tahtalar</Text>
+                <Text style={styles.adminCardValue}>{stats?.totalStalls}</Text>
+                <Ionicons name="grid" size={16} color={COLORS.warning} style={styles.adminIcon} />
+            </View>
+            <View style={styles.adminCard}>
+                <Text style={styles.adminCardLabel}>Toplam Ciro</Text>
+                <Text style={[styles.adminCardValue, {fontSize: 14}]}>{stats?.totalPlatformRevenue?.toLocaleString('tr-TR')} ₺</Text>
+                <Ionicons name="cash" size={16} color={COLORS.success} style={styles.adminIcon} />
+            </View>
+          </View>
+        )}
+
+        {/* --- GENEL ÖZET KARTLARI (Herkes İçin) --- */}
         <View style={styles.statsGrid}>
-          {/* Ana Kart (Gelir/Gider) */}
           <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
             <View style={styles.iconCircleLight}>
               <Ionicons name={mainCardIcon} size={24} color={COLORS.primary} />
             </View>
             <Text style={styles.statLabelLight}>{mainCardTitle}</Text>
-            <Text style={styles.statValueLight}>{stats?.currentMonthTotal.toLocaleString('tr-TR')} ₺</Text>
-            
-            {isOwner && (
-                <Text style={{color:'rgba(255,255,255,0.7)', fontSize:11, marginTop:4}}>
-                %{occupancyRate} Doluluk
-                </Text>
-            )}
+            <Text style={styles.statValueLight}>{stats?.currentMonthTotal?.toLocaleString('tr-TR')} ₺</Text>
           </View>
 
-          {/* İkincil Kart (Potansiyel/Adet) */}
           <View style={[styles.statCard, { backgroundColor: '#fff' }]}>
              <View style={[styles.iconCircle, { backgroundColor: isOwner ? '#F3E5F5' : '#FFF3E0' }]}> 
               <Ionicons name={isOwner ? "bar-chart" : "receipt"} size={24} color={isOwner ? COLORS.secondary : COLORS.warning} />
@@ -127,16 +138,13 @@ export default function DashboardScreen() {
             <Text style={[styles.statValue, { color: isOwner ? COLORS.secondary : COLORS.warning }]}>
               {secondaryValue}
             </Text>
-            <Text style={{color:COLORS.textLight, fontSize:11, marginTop:4}}>
-              {isOwner ? 'Tam kapasite hedefi' : 'Bu ay yapılan kiralama'}
-            </Text>
           </View>
         </View>
 
-        {/* --- 2. GRAFİK --- */}
+        {/* --- GRAFİK --- */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>
-            {isOwner ? 'Gelir Trendi (Son 6 Ay)' : 'Harcama Geçmişi (Son 6 Ay)'}
+            {isAdmin ? 'Platform Aktivitesi (Son 6 Ay)' : (isOwner ? 'Gelir Trendi' : 'Harcama Geçmişi')}
           </Text>
           {stats?.chartData && (
             <LineChart
@@ -161,7 +169,7 @@ export default function DashboardScreen() {
           )}
         </View>
 
-        {/* --- 3. BİLGİ KARTI --- */}
+        {/* --- TREND KARTI --- */}
         <View style={[styles.infoCard, { borderLeftColor: trendColor, backgroundColor: diff > 0 ? '#E8F5E9' : (diff < 0 ? '#FFF3E0' : '#E3F2FD') }]}>
           <Ionicons name={trendIcon} size={32} color={trendColor} style={{ marginRight: 12 }} />
           <View style={{flex:1}}>
@@ -185,12 +193,22 @@ const styles = StyleSheet.create({
 
   scrollContent: { padding: LAYOUT.padding },
 
+  // ADMIN GRID
+  adminGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 },
+  adminCard: { 
+    width: '48%', backgroundColor: '#fff', padding: 12, borderRadius: 12, marginBottom: 10,
+    ...SHADOWS.light, position: 'relative'
+  },
+  adminCardLabel: { fontSize: 12, color: COLORS.textLight, marginBottom: 4 },
+  adminCardValue: { fontSize: 20, fontWeight: 'bold', color: COLORS.textDark },
+  adminIcon: { position: 'absolute', top: 12, right: 12, opacity: 0.8 },
+
+  // STANDART KARTLAR
   statsGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   statCard: {
     width: '48%', padding: 16, borderRadius: 16,
     ...SHADOWS.medium, justifyContent: 'space-between', height: 150
   },
-  
   iconCircleLight: {
     width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.9)',
     justifyContent: 'center', alignItems: 'center', marginBottom: 8

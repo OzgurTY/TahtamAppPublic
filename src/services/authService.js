@@ -2,9 +2,10 @@ import { auth, db } from '../config/firebase';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
-  signOut 
+  signOut,
+  deleteUser // <-- YENİ
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore'; // <-- deleteDoc EKLENDİ
 
 // YENİ KULLANICI KAYDI
 export const registerUser = async (email, password, userData) => {
@@ -57,12 +58,31 @@ export const getUserProfile = async (uid) => {
   }
 };
 
+// PROFİL GÜNCELLEME
 export const updateUserProfile = async (uid, data) => {
   try {
     const userRef = doc(db, "users", uid);
     await updateDoc(userRef, data);
   } catch (error) {
     console.error("Profil güncelleme hatası:", error);
+    throw error;
+  }
+};
+
+// YENİ: HESAP SİLME
+export const deleteUserAccount = async () => {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  try {
+    // 1. Firestore'daki profil verisini sil
+    await deleteDoc(doc(db, "users", user.uid));
+
+    // 2. Authentication hesabını sil
+    // Not: Bu işlem kullanıcının "yakın zamanda" giriş yapmış olmasını gerektirir.
+    await deleteUser(user);
+  } catch (error) {
+    console.error("Hesap silme hatası:", error);
     throw error;
   }
 };

@@ -6,20 +6,91 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { subscribeToRentalsByRole, toggleRentalPaymentStatus, deleteRental } from '../services/rentalService';
-import { getUserProfile } from '../services/authService'; // IBAN sorgusu için
+import { getUserProfile } from '../services/authService'; 
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
+
+// Kart Bileşeni
+const RentalCard = ({ item, canManage, onTogglePayment, onDelete, onShowIban }) => {
+  const [ownerName, setOwnerName] = useState('Yükleniyor...');
+
+  useEffect(() => {
+    let isMounted = true;
+    // Eğer ben Yönetici değilsem (Kiracıysam) ve Owner ID varsa, ismini çek
+    if (!canManage && item.ownerId) {
+      getUserProfile(item.ownerId).then(profile => {
+        if (isMounted && profile) {
+          setOwnerName(profile.fullName);
+        }
+      });
+    }
+    return () => { isMounted = false; };
+  }, [item.ownerId, canManage]);
+
+  const formattedDate = item.date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'short' });
+
+  return (
+    <TouchableOpacity 
+        style={[styles.card, item.isPaid ? styles.cardPaid : styles.cardUnpaid]}
+        activeOpacity={canManage ? 0.8 : 1}
+        onLongPress={() => onDelete(item)}
+      >
+        <View style={styles.cardHeader}>
+          <Text style={styles.dateText}>{formattedDate}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: item.isPaid ? COLORS.success : COLORS.danger }]}>
+            <Text style={styles.statusText}>{item.isPaid ? 'ÖDENDİ' : 'BEKLİYOR'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardBody}>
+          <View>
+            <Text style={styles.stallText}>{item.stallNumber}</Text>
+            <Text style={styles.subText}>
+                {canManage 
+                  ? `Kiracı: ${item.tenantName}` 
+                  : `Tahta Sahibi: ${ownerName}`} 
+            </Text>
+          </View>
+          <Text style={styles.priceText}>{item.price} ₺</Text>
+        </View>
+
+        <View style={styles.cardFooter}>
+          {canManage ? (
+            <TouchableOpacity 
+              style={[styles.actionButton, { backgroundColor: item.isPaid ? '#E5E5EA' : COLORS.primary }]}
+              onPress={() => onTogglePayment(item)}
+            >
+              <Ionicons name={item.isPaid ? "arrow-undo" : "checkmark-circle"} size={18} color={item.isPaid ? COLORS.textDark : '#fff'} />
+              <Text style={[styles.actionText, { color: item.isPaid ? COLORS.textDark : '#fff' }]}>
+                {item.isPaid ? 'Ödenmedi Olarak İşaretle' : 'Ödeme Alındı'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            !item.isPaid && (
+              <TouchableOpacity 
+                style={[styles.actionButton, { backgroundColor: COLORS.secondary }]}
+                onPress={() => onShowIban(item.ownerId)}
+              >
+                <Ionicons name="card" size={18} color="#fff" />
+                <Text style={[styles.actionText, { color: '#fff' }]}>Ödeme Yap (IBAN Göster)</Text>
+              </TouchableOpacity>
+            )
+          )}
+        </View>
+      </TouchableOpacity>
+  );
+};
 
 export default function RentalsScreen() {
   const { user, userProfile } = useContext(AuthContext);
   const [rentals, setRentals] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // IBAN Modal State (Kiracı için)
   const [ibanModalVisible, setIbanModalVisible] = useState(false);
   const [currentOwnerIban, setCurrentOwnerIban] = useState('');
   const [currentOwnerName, setCurrentOwnerName] = useState('');
 
-  const isOwner = userProfile?.role === 'OWNER';
+  // YETKİ KONTROLÜ: Owner VEYA Admin ise yönetebilir
+  const canManage = userProfile?.role === 'OWNER' || userProfile?.role === 'ADMIN';
 
   useEffect(() => {
     if (user && userProfile) {
@@ -31,18 +102,13 @@ export default function RentalsScreen() {
     }
   }, [user, userProfile]);
 
-  // --- İŞLEMLER ---
-
   const handlePaymentToggle = (item) => {
-    // Sadece Owner ödeme durumunu değiştirebilir
-    if (!isOwner) return;
+    if (!canManage) return;
     toggleRentalPaymentStatus(item.id, item.isPaid);
   };
 
   const handleDelete = (item) => {
-    // Sadece Owner silebilir (veya Tenant sadece ödenmemişleri silebilir mantığı kurulabilir)
-    if (!isOwner) return; 
-    
+    if (!canManage) return; 
     Alert.alert('Sil', 'Bu kaydı silmek istediğine emin misin?', [
       { text: 'İptal', style: 'cancel' },
       { text: 'Sil', style: 'destructive', onPress: () => deleteRental(item.id) }
@@ -51,7 +117,6 @@ export default function RentalsScreen() {
 
   const handleShowIban = async (ownerId) => {
     try {
-      // Sahibin profilini çek
       const ownerData = await getUserProfile(ownerId);
       if (ownerData && ownerData.iban) {
         setCurrentOwnerName(ownerData.fullName);
@@ -70,63 +135,6 @@ export default function RentalsScreen() {
     Alert.alert("Kopyalandı", "IBAN panoya kopyalandı.");
   };
 
-  // --- RENDER ---
-
-  const renderItem = ({ item }) => {
-    const formattedDate = item.date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'short' });
-    
-    return (
-      <TouchableOpacity 
-        style={[styles.card, item.isPaid ? styles.cardPaid : styles.cardUnpaid]}
-        activeOpacity={isOwner ? 0.8 : 1}
-        onLongPress={() => handleDelete(item)}
-      >
-        <View style={styles.cardHeader}>
-          <Text style={styles.dateText}>{formattedDate}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: item.isPaid ? COLORS.success : COLORS.danger }]}>
-            <Text style={styles.statusText}>{item.isPaid ? 'ÖDENDİ' : 'BEKLİYOR'}</Text>
-          </View>
-        </View>
-
-        <View style={styles.cardBody}>
-          <View>
-            <Text style={styles.stallText}>{item.stallNumber}</Text>
-            <Text style={styles.subText}>
-                {isOwner ? `Kiracı: ${item.tenantName}` : `Tahta Sahibi ID: ...${item.ownerId?.slice(-4)}`}
-            </Text>
-          </View>
-          <Text style={styles.priceText}>{item.price} ₺</Text>
-        </View>
-
-        {/* AKSİYON BUTONLARI */}
-        <View style={styles.cardFooter}>
-          {isOwner ? (
-            <TouchableOpacity 
-              style={[styles.actionButton, { backgroundColor: item.isPaid ? '#E5E5EA' : COLORS.primary }]}
-              onPress={() => handlePaymentToggle(item)}
-            >
-              <Ionicons name={item.isPaid ? "undo" : "checkmark-circle"} size={18} color={item.isPaid ? COLORS.textDark : '#fff'} />
-              <Text style={[styles.actionText, { color: item.isPaid ? COLORS.textDark : '#fff' }]}>
-                {item.isPaid ? 'Ödenmedi Olarak İşaretle' : 'Ödeme Alındı'}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            // KİRACI İÇİN IBAN GÖSTER BUTONU (Eğer ödenmemişse)
-            !item.isPaid && (
-              <TouchableOpacity 
-                style={[styles.actionButton, { backgroundColor: COLORS.secondary }]}
-                onPress={() => handleShowIban(item.ownerId)}
-              >
-                <Ionicons name="card" size={18} color="#fff" />
-                <Text style={[styles.actionText, { color: '#fff' }]}>Ödeme Yap (IBAN Göster)</Text>
-              </TouchableOpacity>
-            )
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -134,19 +142,26 @@ export default function RentalsScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Hareketler</Text>
         <Text style={styles.headerSubtitle}>
-            {isOwner ? 'Tahsilat ve kiralama geçmişi' : 'Ödemelerim ve kiralamalarım'}
+            {canManage ? 'Tüm kiralama ve tahsilat işlemleri' : 'Ödemelerim ve kiralamalarım'}
         </Text>
       </View>
 
       <FlatList
         data={rentals}
-        renderItem={renderItem}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={<Text style={styles.emptyText}>Henüz işlem yok.</Text>}
+        renderItem={({ item }) => (
+          <RentalCard 
+            item={item}
+            canManage={canManage}
+            onTogglePayment={handlePaymentToggle}
+            onDelete={handleDelete}
+            onShowIban={handleShowIban}
+          />
+        )}
       />
 
-      {/* IBAN MODALI (KİRACI İÇİN) */}
       <Modal visible={ibanModalVisible} animationType="fade" transparent={true}>
         <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
@@ -201,7 +216,6 @@ const styles = StyleSheet.create({
 
   emptyText: { textAlign: 'center', marginTop: 40, color: COLORS.textLight },
 
-  // Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 30 },
   modalContainer: { backgroundColor: '#fff', borderRadius: 16, padding: 20, alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 4 },

@@ -11,7 +11,6 @@ import { createRental, deleteRental, subscribeToRentalsByDate, checkAvailability
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
 import { AuthContext } from '../context/AuthContext';
 
-// GÜN SABİTLERİ
 const DAY_LABELS = {
   'MONDAY': 'Pazartesi', 'TUESDAY': 'Salı', 'WEDNESDAY': 'Çarşamba',
   'THURSDAY': 'Perşembe', 'FRIDAY': 'Cuma', 'SATURDAY': 'Cumartesi', 'SUNDAY': 'Pazar'
@@ -23,13 +22,11 @@ const SHORT_DAY_LABELS = {
 const ALL_DAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 
 export default function StallsScreen({ route }) { 
-  // --- CONTEXT & ROL ---
   const { user, userProfile } = useContext(AuthContext);
   const isOwner = userProfile?.role === 'OWNER';
   const isAdmin = userProfile?.role === 'ADMIN';
   const isTenant = userProfile?.role === 'TENANT';
 
-  // --- STATE ---
   const [marketplaces, setMarketplaces] = useState([]);
   const [selectedMarketId, setSelectedMarketId] = useState(null);
   const [stalls, setStalls] = useState([]);
@@ -38,36 +35,27 @@ export default function StallsScreen({ route }) {
 
   const [selectedDate, setSelectedDate] = useState(new Date());
 
-  // Modallar
   const [stallModalVisible, setStallModalVisible] = useState(false);
   const [rentalModalVisible, setRentalModalVisible] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   
-  // Formlar (Tahta)
   const [activeStall, setActiveStall] = useState(null); 
   const [stallNumber, setStallNumber] = useState('');
   const [productTypes, setProductTypes] = useState('');
   const [pricesByDay, setPricesByDay] = useState({}); 
   
-  // Formlar (Kiralama)
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [searchTenantText, setSearchTenantText] = useState('');
   const [isMonthMode, setIsMonthMode] = useState(false);
   const [agreedTotalPrice, setAgreedTotalPrice] = useState(''); 
   const [selectedWeekdays, setSelectedWeekdays] = useState([]);
 
-  // Çoklu Seçim
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedStallIds, setSelectedStallIds] = useState([]); 
 
-  // --- YARDIMCI FONKSİYONLAR ---
-  
   const getDayId = (date) => ALL_DAYS[date.getDay()];
   const formatDateKey = (date) => date.toISOString().split('T')[0];
-  
-  const formatDateDisplay = (date) => {
-    return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
-  };
+  const formatDateDisplay = (date) => date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
 
   const changeDate = (days) => {
     const newDate = new Date(selectedDate);
@@ -75,22 +63,15 @@ export default function StallsScreen({ route }) {
     setSelectedDate(newDate);
   };
 
-  // --- VERİ ÇEKME ---
-
   useEffect(() => {
-    if (route.params?.marketId) {
-      setSelectedMarketId(route.params.marketId);
-    }
+    if (route.params?.marketId) setSelectedMarketId(route.params.marketId);
   }, [route.params]);
 
   useEffect(() => {
     const unsubMarket = subscribeToMarketplaces((data) => {
       setMarketplaces(data);
-      if (!route.params?.marketId && !selectedMarketId && data.length > 0) {
-        setSelectedMarketId(data[0].id);
-      }
+      if (!route.params?.marketId && !selectedMarketId && data.length > 0) setSelectedMarketId(data[0].id);
     });
-    // Kiracı listesini sadece Admin veya Owner ise çekmeye gerek var ama şimdilik kalsın
     const unsubTenant = subscribeToTenants(setTenants);
     return () => { unsubMarket(); unsubTenant(); }
   }, []);
@@ -116,13 +97,9 @@ export default function StallsScreen({ route }) {
   const currentMarket = marketplaces.find(m => m.id === selectedMarketId);
   const isMarketOpenToday = currentMarket?.openDays?.includes(getDayId(selectedDate));
 
-  // --- HESAPLAMA FONKSİYONLARI ---
-
   const getPriceForDay = (stall, dateObj) => {
     const dayId = getDayId(dateObj);
-    if (stall.prices && stall.prices[dayId]) {
-      return parseFloat(stall.prices[dayId]);
-    }
+    if (stall.prices && stall.prices[dayId]) return parseFloat(stall.prices[dayId]);
     return parseFloat(stall.price) || 0;
   };
 
@@ -153,9 +130,7 @@ export default function StallsScreen({ route }) {
         let tempDate = new Date(selectedDate);
         while (tempDate.getMonth() === currentMonth) {
           const dayName = ALL_DAYS[tempDate.getDay()];
-          if (selectedWeekdays.includes(dayName)) {
-            total += getPriceForDay(stall, tempDate);
-          }
+          if (selectedWeekdays.includes(dayName)) total += getPriceForDay(stall, tempDate);
           tempDate.setDate(tempDate.getDate() + 1);
         }
       } else {
@@ -168,8 +143,6 @@ export default function StallsScreen({ route }) {
   const standardTotal = calculateStandardTotal();
   const rentDaysCount = calculateRentDays();
   const targetStalls = getSelectedStallsObjects();
-
-  // --- İŞLEM FONKSİYONLARI ---
 
   const getStallStatus = (stallId) => {
     const rental = rentals.find(r => r.stallId === stallId);
@@ -201,24 +174,19 @@ export default function StallsScreen({ route }) {
     };
 
     try {
-      if (isEditing) {
-        await updateStall(activeStall.id, payload);
-      } else {
-        await addStall(payload, user.uid);
-      }
+      if (isEditing) await updateStall(activeStall.id, payload);
+      else await addStall(payload, user.uid);
       setStallModalVisible(false);
     } catch (error) { Alert.alert('Hata', 'Kaydedilemedi'); }
   };
 
   const openStallModal = (stall = null) => {
     if (!selectedMarketId) return Alert.alert('Uyarı', 'Lütfen pazar seçin');
-    
     if (stall) {
       setIsEditing(true);
       setActiveStall(stall);
       setStallNumber(stall.stallNumber);
       setProductTypes(stall.productTypes?.join(', ') || '');
-      
       if (stall.prices) {
         const formattedPrices = {};
         Object.keys(stall.prices).forEach(k => formattedPrices[k] = stall.prices[k].toString());
@@ -251,13 +219,11 @@ export default function StallsScreen({ route }) {
 
   const handleStallPress = (stall) => {
     if (!isMarketOpenToday) return;
-
     if (isSelectionMode) {
         if (selectedStallIds.includes(stall.id)) setSelectedStallIds(selectedStallIds.filter(id => id !== stall.id));
         else setSelectedStallIds([...selectedStallIds, stall.id]);
         return;
     }
-
     const status = getStallStatus(stall.id);
     if (status.isOccupied) {
       Alert.alert(`${stall.stallNumber} - Dolu`, `Kiracı: ${status.tenantName}`, [
@@ -279,7 +245,6 @@ export default function StallsScreen({ route }) {
   const handleStallOptions = (stall) => {
     if (isTenant) return;
     if (isSelectionMode) return;
-
     Alert.alert(`${stall.stallNumber} İşlemleri`, 'Seçiminiz:', [
       { text: 'Vazgeç', style: 'cancel' },
       { text: 'Sil', style: 'destructive', onPress: () => deleteStall(stall.id) },
@@ -287,12 +252,8 @@ export default function StallsScreen({ route }) {
     ]);
   };
 
-  // --- KİRALAMA OLUŞTURMA (BUG FIX UYGULANDI) ---
   const handleCreateRental = async () => {
-    // Kural: Kiracı değilse (Owner/Admin), bir kiracı seçmek zorunda
-    if (!isTenant && !selectedTenant) {
-        return Alert.alert('Hata', 'Lütfen bir kiracı seçin.');
-    }
+    if (!isTenant && !selectedTenant) return Alert.alert('Hata', 'Lütfen bir kiracı seçin.');
     
     const targetStallsList = getSelectedStallsObjects().filter(s => !getStallStatus(s.id).isOccupied);
     if (targetStallsList.length === 0) return;
@@ -300,42 +261,33 @@ export default function StallsScreen({ route }) {
     const rentalsPayload = [];
     const allChecks = [];
 
-    // Kural: Kiracılar pazarlık yapamaz, indirim giremez.
-    // isCustomPrice sadece Owner/Admin için geçerli olabilir.
     const canSetPrice = !isTenant && agreedTotalPrice && parseFloat(agreedTotalPrice) > 0;
-    
     let discountRatio = 1;
     if (canSetPrice && standardTotal > 0) {
       discountRatio = parseFloat(agreedTotalPrice) / standardTotal;
     }
 
-    // Kiracı Bilgilerini Belirle (Kendisi mi, Seçilen mi?)
-    const tenantId = isTenant ? user.uid : selectedTenant.id;
-    const tenantName = isTenant ? userProfile.fullName : selectedTenant.fullName;
+    const tenantId = isTenant ? user.uid : selectedTenant?.id;
+    const tenantName = isTenant ? userProfile.fullName : selectedTenant?.fullName;
 
     targetStallsList.forEach(stall => {
         const plannedDatesForStall = []; 
-
         if (isMonthMode) {
             const currentMonth = selectedDate.getMonth();
             let tempDate = new Date(selectedDate);
-            
             while (tempDate.getMonth() === currentMonth) {
                 const dayName = ALL_DAYS[tempDate.getDay()];
                 if (selectedWeekdays.includes(dayName)) {
                     plannedDatesForStall.push(formatDateKey(new Date(tempDate)));
-                    
                     const originalPrice = getPriceForDay(stall, tempDate);
-                    // Kiracıysa her zaman orijinal fiyat (discountRatio 1 olur)
                     const finalPrice = originalPrice * discountRatio;
-
                     rentalsPayload.push({
                         marketplaceId: selectedMarketId,
                         stallId: stall.id,
                         stallNumber: stall.stallNumber,
                         ownerId: stall.ownerId,
-                        tenantId: tenantId,     // <-- Düzeltildi
-                        tenantName: tenantName, // <-- Düzeltildi
+                        tenantId: tenantId,     
+                        tenantName: tenantName, 
                         price: finalPrice,
                         dateString: formatDateKey(new Date(tempDate)),
                         date: new Date(tempDate)
@@ -347,20 +299,18 @@ export default function StallsScreen({ route }) {
             plannedDatesForStall.push(formatDateKey(selectedDate));
             const originalPrice = getPriceForDay(stall, selectedDate);
             const finalPrice = originalPrice * discountRatio;
-
             rentalsPayload.push({
                 marketplaceId: selectedMarketId,
                 stallId: stall.id,
                 stallNumber: stall.stallNumber,
                 ownerId: stall.ownerId,
-                tenantId: tenantId,     // <-- Düzeltildi
-                tenantName: tenantName, // <-- Düzeltildi
+                tenantId: tenantId,     
+                tenantName: tenantName, 
                 price: finalPrice,
                 dateString: formatDateKey(selectedDate),
                 date: new Date(selectedDate)
             });
         }
-
         if (plannedDatesForStall.length > 0) {
             allChecks.push(
                 checkAvailability(stall.id, plannedDatesForStall)
@@ -374,9 +324,7 @@ export default function StallsScreen({ route }) {
         const errors = results.filter(r => r.conflicts.length > 0);
         
         if (errors.length > 0) {
-            const errorMsg = errors.map(e => 
-                `${e.stallNumber} nolu tahta şu tarihlerde dolu:\n${e.conflicts.join(', ')}`
-            ).join('\n\n');
+            const errorMsg = errors.map(e => `${e.stallNumber} nolu tahta şu tarihlerde dolu:\n${e.conflicts.join(', ')}`).join('\n\n');
             Alert.alert("Çakışma!", `İşlem iptal edildi.\n\n${errorMsg}`);
             return;
         }
@@ -394,8 +342,8 @@ export default function StallsScreen({ route }) {
             { text: 'Onayla', onPress: () => submitRentals(rentalsPayload) }
           ]
         );
-
     } catch (error) {
+        console.error("Müsaitlik Hatası Detayı:", error);
         Alert.alert("Hata", "Müsaitlik kontrolü yapılamadı.");
     }
   };
@@ -421,7 +369,6 @@ export default function StallsScreen({ route }) {
     }
   };
 
-  // --- RENDER ---
   const renderStall = ({ item }) => {
     const status = getStallStatus(item.id);
     const isSelected = selectedStallIds.includes(item.id);
@@ -551,30 +498,65 @@ export default function StallsScreen({ route }) {
         )}
       </View>
 
+      {/* TAHTA EKLEME MODALI (KLAVYE DÜZELTMESİ EKLENDİ) */}
       <Modal visible={stallModalVisible} animationType="slide" transparent={true}>
-         <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>{isEditing ? 'Tahtayı Düzenle' : 'Yeni Tahta'}</Text>
-            <TextInput style={styles.input} placeholder="Tahta No" placeholderTextColor={COLORS.textLight} value={stallNumber} onChangeText={setStallNumber} />
-            <View style={{marginBottom: 10}}>
-                <Text style={styles.sectionHeader}>Günlük Fiyatlar:</Text>
-                {currentMarket?.openDays?.map(day => (
-                    <View key={day} style={styles.priceInputRow}>
-                        <Text style={styles.dayLabel}>{SHORT_DAY_LABELS[day]}:</Text>
-                        <TextInput style={styles.smallInput} placeholder="0" keyboardType="numeric" value={pricesByDay[day] || ''} onChangeText={(text) => handlePriceChange(day, text)} />
-                        <Text style={{marginLeft: 5, fontWeight: 'bold'}}>₺</Text>
-                    </View>
-                ))}
-            </View>
-            <TextInput style={styles.input} placeholder="Ürünler" placeholderTextColor={COLORS.textLight} value={productTypes} onChangeText={setProductTypes} />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setStallModalVisible(false)}><Text style={styles.cancelBtnText}>İptal</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveStall}><Text style={styles.saveBtnText}>Kaydet</Text></TouchableOpacity>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContainer, { maxHeight: '90%' }]}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <Text style={styles.modalTitle}>{isEditing ? 'Tahtayı Düzenle' : 'Yeni Tahta'}</Text>
+                
+                <TextInput 
+                    style={styles.input} 
+                    placeholder="Tahta No (Örn: A-10)" 
+                    placeholderTextColor={COLORS.textLight} 
+                    value={stallNumber} 
+                    onChangeText={setStallNumber} 
+                />
+                
+                <View style={{marginBottom: 10}}>
+                    <Text style={styles.sectionHeader}>Günlük Fiyatlar:</Text>
+                    {currentMarket?.openDays?.map(day => (
+                        <View key={day} style={styles.priceInputRow}>
+                            <Text style={styles.dayLabel}>{SHORT_DAY_LABELS[day]}:</Text>
+                            <TextInput 
+                                style={styles.smallInput} 
+                                placeholder="0" 
+                                keyboardType="numeric" 
+                                value={pricesByDay[day] || ''} 
+                                onChangeText={(text) => handlePriceChange(day, text)} 
+                            />
+                            <Text style={{marginLeft: 5, fontWeight: 'bold'}}>₺</Text>
+                        </View>
+                    ))}
+                </View>
+
+                <TextInput 
+                    style={styles.input} 
+                    placeholder="Ürünler (Virgülle ayırın)" 
+                    placeholderTextColor={COLORS.textLight} 
+                    value={productTypes} 
+                    onChangeText={setProductTypes} 
+                />
+                
+                <View style={styles.modalActions}>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setStallModalVisible(false)}>
+                    <Text style={styles.cancelBtnText}>İptal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.saveBtn} onPress={handleSaveStall}>
+                    <Text style={styles.saveBtnText}>Kaydet</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
+      {/* KİRALAMA MODALI (KLAVYE DÜZELTMESİ EKLENDİ) */}
       <Modal visible={rentalModalVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
           <View style={[styles.modalContainer, { height: '90%' }]}>
@@ -609,7 +591,6 @@ export default function StallsScreen({ route }) {
                 <Text style={styles.priceValue}>{standardTotal.toLocaleString('tr-TR')} ₺</Text>
               </View>
               
-              {/* SADECE OWNER/ADMIN İNDİRİM YAPABİLİR */}
               {!isTenant && (
                 <View style={styles.discountInputContainer}>
                     <Text style={styles.discountLabel}>Anlaşılan Tutar:</Text>
@@ -619,7 +600,6 @@ export default function StallsScreen({ route }) {
               )}
             </View>
 
-            {/* SADECE OWNER/ADMIN KİRACI SEÇEBİLİR */}
             {!isTenant && (
                 <>
                     <TextInput style={[styles.input, {marginTop: 10}]} placeholder="Kiracı Ara..." placeholderTextColor={COLORS.textLight} value={searchTenantText} onChangeText={setSearchTenantText} />
