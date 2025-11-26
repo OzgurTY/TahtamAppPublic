@@ -91,3 +91,31 @@ export const checkAvailability = async (stallId, dateStrings) => {
   const conflicts = existingRentals.filter(date => dateStrings.includes(date));
   return conflicts; 
 };
+
+export const deleteRentalsBatch = async (rentalIds) => {
+  try {
+    const batch = writeBatch(db);
+    rentalIds.forEach(id => {
+      const ref = doc(db, RENTALS_COLLECTION, id);
+      batch.delete(ref);
+    });
+    await batch.commit();
+  } catch (error) {
+    console.error("Toplu silme hatası:", error);
+    throw error;
+  }
+};
+
+export const markRentalsPaidBatch = async (rentalIds, isPaidStatus) => {
+  try {
+    const batch = writeBatch(db);
+    rentalIds.forEach(id => {
+      const ref = doc(db, RENTALS_COLLECTION, id);
+      batch.update(ref, { isPaid: isPaidStatus });
+    });
+    await batch.commit();
+  } catch (error) {
+    console.error("Toplu güncelleme hatası:", error);
+    throw error;
+  }
+};
