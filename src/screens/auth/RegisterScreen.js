@@ -44,7 +44,7 @@ export default function RegisterScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.title}>Aramıza Katıl</Text>
-          <Text style={styles.subtitle}>TahtamApp ile pazar yerini yönet.</Text>
+          <Text style={styles.subtitle}>Tahtam ile pazar yerini yönet.</Text>
 
           {/* ROL SEÇİMİ */}
           <View style={styles.roleContainer}>

@@ -30,7 +30,7 @@ export default function LoginScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <Text style={styles.logoText}>TahtamApp</Text>
+            <Text style={styles.logoText}>Tahtam</Text>
             <Text style={styles.subtitle}>Tekrar Hoşgeldiniz!</Text>
           </View>
 
