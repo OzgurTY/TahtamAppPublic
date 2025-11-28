@@ -9,27 +9,12 @@ const RENTALS_COLLECTION = 'rentals';
 // Belirli bir Rol için kiralama geçmişi
 export const subscribeToRentalsByRole = (userId, role, callback) => {
   let q;
-
   if (role === 'ADMIN') {
-    // ADMIN: Hiçbir filtre yok, tüm geçmişi görür
-    q = query(
-      collection(db, RENTALS_COLLECTION),
-      orderBy('date', 'desc')
-    );
+    q = query(collection(db, RENTALS_COLLECTION), orderBy('date', 'desc'));
   } else if (role === 'OWNER') {
-    // OWNER: Sadece kendi mülklerinin kirasını görür
-    q = query(
-      collection(db, RENTALS_COLLECTION),
-      where('ownerId', '==', userId),
-      orderBy('date', 'desc')
-    );
+    q = query(collection(db, RENTALS_COLLECTION), where('ownerId', '==', userId), orderBy('date', 'desc'));
   } else {
-    // TENANT: Sadece kendi ödemelerini görür
-    q = query(
-      collection(db, RENTALS_COLLECTION),
-      where('tenantId', '==', userId),
-      orderBy('date', 'desc')
-    );
+    q = query(collection(db, RENTALS_COLLECTION), where('tenantId', '==', userId), orderBy('date', 'desc'));
   }
 
   return onSnapshot(q, (snapshot) => {
@@ -58,10 +43,19 @@ export const subscribeToRentalsByDate = (marketId, dateString, callback) => {
 // Kiralama Yap (Batch)
 export const createRental = async (rentalsDataArray) => {
   const batch = writeBatch(db);
+  
+  const groupId = rentalsDataArray.length > 1 ? `GROUP_${Date.now()}` : null;
+
   rentalsDataArray.forEach(rental => {
     const docRef = doc(collection(db, RENTALS_COLLECTION));
-    batch.set(docRef, { ...rental, createdAt: new Date(), isPaid: false });
+    batch.set(docRef, {
+      ...rental,
+      groupId: groupId,
+      createdAt: new Date(),
+      isPaid: false
+    });
   });
+
   await batch.commit();
 };
 
@@ -70,9 +64,45 @@ export const deleteRental = async (rentalId) => {
   await deleteDoc(ref);
 };
 
+export const deleteRentalGroup = async (groupId) => {
+  try {
+    const q = query(collection(db, RENTALS_COLLECTION), where('groupId', '==', groupId));
+    const snapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    
+    snapshot.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    
+    await batch.commit();
+  } catch (error) {
+    console.error("Grup silme hatası:", error);
+    throw error;
+  }
+};
+
 export const toggleRentalPaymentStatus = async (rentalId, currentStatus) => {
   const ref = doc(db, RENTALS_COLLECTION, rentalId);
   await updateDoc(ref, { isPaid: !currentStatus });
+};
+
+export const toggleRentalGroupPaymentStatus = async (groupId, currentStatus) => {
+  try {
+    const q = query(collection(db, RENTALS_COLLECTION), where('groupId', '==', groupId));
+    const snapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    
+    const newStatus = !currentStatus;
+
+    snapshot.forEach(doc => {
+      batch.update(doc.ref, { isPaid: newStatus });
+    });
+    
+    await batch.commit();
+  } catch (error) {
+    console.error("Grup ödeme hatası:", error);
+    throw error;
+  }
 };
 
 export const checkAvailability = async (stallId, dateStrings) => {
