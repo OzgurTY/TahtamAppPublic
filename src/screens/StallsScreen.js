@@ -67,13 +67,16 @@ export default function StallsScreen({ route }) {
 
   // --- YARDIMCI FONKSİYONLAR ---
   const getDayId = (date) => ALL_DAYS[date.getDay()];
+  
   const formatDateKey = (date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
+  
   const formatDateDisplay = (date) => date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
+
   const changeDate = (days) => {
     const newDate = new Date(selectedDate);
     newDate.setDate(newDate.getDate() + days);
@@ -181,6 +184,7 @@ export default function StallsScreen({ route }) {
     return activeStall ? [activeStall] : [];
   };
 
+  // Toplam hesaplama
   const calculateStandardTotal = () => {
     const targets = getSelectedStallsObjects();
     let total = 0;
@@ -273,7 +277,11 @@ export default function StallsScreen({ route }) {
   };
 
   const handleStallPress = (stall) => {
-    if (!isMarketOpenToday) return;
+    if (!isMarketOpenToday) {
+        Alert.alert("Kapalı", "Bu pazar bugün kapalı olduğu için işlem yapılamaz.");
+        return;
+    }
+
     if (isSelectionMode) {
         if (selectedStallIds.includes(stall.id)) setSelectedStallIds(selectedStallIds.filter(id => id !== stall.id));
         else setSelectedStallIds([...selectedStallIds, stall.id]);
@@ -307,95 +315,168 @@ export default function StallsScreen({ route }) {
     ]);
   };
 
+  // --- KİRALAMA OLUŞTURMA (KESİN FİYAT MANTIĞI) ---
   const handleCreateRental = async () => {
-    if (!isTenant && !selectedTenant) return Alert.alert('Hata', 'Lütfen bir kiracı seçin.');
+    if (!isTenant && !selectedTenant) {
+        return Alert.alert('Hata', 'Lütfen bir kiracı seçin.');
+    }
     
     const targetStallsList = getSelectedStallsObjects().filter(s => !getStallStatus(s.id).isOccupied);
     if (targetStallsList.length === 0) return;
 
-    const rentalsPayload = [];
-    const allChecks = [];
-
-    const canSetPrice = !isTenant && agreedTotalPrice && parseFloat(agreedTotalPrice) > 0;
-    let discountRatio = 1;
-    if (canSetPrice && standardTotal > 0) {
-      discountRatio = parseFloat(agreedTotalPrice) / standardTotal;
-    }
-
+    // --- 1. ADIM: TÜM KİRALAMA KALEMLERİNİ OLUŞTUR ---
+    // Önce "yapılacaklar listesi"ni çıkarıyoruz ki toplam fiyatı bilelim
+    // ve dağıtımı ona göre yapalım.
+    let allRentalItems = [];
+    
     const tenantId = isTenant ? user.uid : selectedTenant?.id;
     const tenantName = isTenant ? userProfile.fullName : selectedTenant?.fullName;
 
     targetStallsList.forEach(stall => {
-        const plannedDatesForStall = []; 
+        const effectiveOwnerId = stall.ownerId || (isOwner ? user.uid : null);
+        
         if (isMonthMode) {
             const currentMonth = selectedDate.getMonth();
             let tempDate = new Date(selectedDate);
+            
             while (tempDate.getMonth() === currentMonth) {
                 const dayName = ALL_DAYS[tempDate.getDay()];
                 if (selectedWeekdays.includes(dayName)) {
-                    plannedDatesForStall.push(formatDateKey(new Date(tempDate)));
+                    const dateKey = formatDateKey(new Date(tempDate));
                     const originalPrice = getPriceForDay(stall, tempDate);
-                    const finalPrice = originalPrice * discountRatio;
-                    rentalsPayload.push({
+                    
+                    allRentalItems.push({
                         marketplaceId: selectedMarketId,
                         stallId: stall.id,
                         stallNumber: stall.stallNumber,
-                        ownerId: stall.ownerId,
-                        tenantId: tenantId,     
-                        tenantName: tenantName, 
-                        price: finalPrice,
-                        dateString: formatDateKey(new Date(tempDate)),
-                        date: new Date(tempDate)
+                        ownerId: effectiveOwnerId,
+                        tenantId,
+                        tenantName,
+                        dateString: dateKey,
+                        date: new Date(tempDate),
+                        originalPrice: originalPrice, // Ham fiyat
+                        finalPrice: 0 // Sonra hesaplanacak
                     });
                 }
                 tempDate.setDate(tempDate.getDate() + 1);
             }
         } else {
-            plannedDatesForStall.push(formatDateKey(selectedDate));
+            const dateKey = formatDateKey(selectedDate);
             const originalPrice = getPriceForDay(stall, selectedDate);
-            const finalPrice = originalPrice * discountRatio;
-            rentalsPayload.push({
+            
+            allRentalItems.push({
                 marketplaceId: selectedMarketId,
                 stallId: stall.id,
                 stallNumber: stall.stallNumber,
-                ownerId: stall.ownerId,
-                tenantId: tenantId,     
-                tenantName: tenantName, 
-                price: finalPrice,
-                dateString: formatDateKey(selectedDate),
-                date: new Date(selectedDate)
+                ownerId: effectiveOwnerId,
+                tenantId,
+                tenantName,
+                dateString: dateKey,
+                date: new Date(selectedDate),
+                originalPrice: originalPrice,
+                finalPrice: 0
             });
-        }
-        if (plannedDatesForStall.length > 0) {
-            allChecks.push(
-                checkAvailability(stall.id, plannedDatesForStall)
-                  .then(conflicts => ({ stallNumber: stall.stallNumber, conflicts }))
-            );
         }
     });
 
+    if (allRentalItems.length === 0) return;
+
+    // --- 2. ADIM: MÜSAİTLİK KONTROLÜ ---
+    const checks = [];
+    // Her tahta için tarihleri grupla (API çağrısını azalt)
+    const stallsMap = {};
+    allRentalItems.forEach(item => {
+        if(!stallsMap[item.stallId]) stallsMap[item.stallId] = [];
+        stallsMap[item.stallId].push(item.dateString);
+    });
+
+    // Kontrol sorgularını oluştur
+    Object.keys(stallsMap).forEach(stallId => {
+        // Tahta numarasını bulmak için örnek bir item'a bak
+        const exampleItem = allRentalItems.find(i => i.stallId === stallId);
+        checks.push(
+            checkAvailability(stallId, stallsMap[stallId])
+             .then(conflicts => ({ stallNumber: exampleItem.stallNumber, conflicts }))
+        );
+    });
+
     try {
-        const results = await Promise.all(allChecks);
+        const results = await Promise.all(checks);
         const errors = results.filter(r => r.conflicts.length > 0);
         
         if (errors.length > 0) {
-            const errorMsg = errors.map(e => `${e.stallNumber} nolu tahta şu tarihlerde dolu:\n${e.conflicts.join(', ')}`).join('\n\n');
+            const errorMsg = errors.map(e => `${e.stallNumber} dolu:\n${e.conflicts.join(', ')}`).join('\n\n');
             Alert.alert("Çakışma!", `İşlem iptal edildi.\n\n${errorMsg}`);
             return;
         }
 
-        const totalAmount = rentalsPayload.reduce((acc, r) => acc + r.price, 0);
+        // --- 3. ADIM: FİYAT DAĞITIMI (KURUŞ HASSASİYETİ) ---
+        
+        // Toplam Standart Fiyat
+        const totalStandardPrice = allRentalItems.reduce((sum, item) => sum + item.originalPrice, 0);
+        
+        // Hedef Fiyat (Anlaşılan veya Standart)
+        let targetTotal = totalStandardPrice;
+        const isCustomPrice = !isTenant && agreedTotalPrice && parseFloat(agreedTotalPrice) > 0;
+        if (isCustomPrice) {
+            targetTotal = parseFloat(agreedTotalPrice);
+        }
+
+        // Dağıtım Algoritması:
+        // Eğer standart fiyat 0 ise (bedava), hedef de 0 olur.
+        // Değilse oransal dağıt.
+        if (totalStandardPrice > 0) {
+            let remainingToDistribute = targetTotal;
+            
+            allRentalItems.forEach((item, index) => {
+                // Son eleman mı? Kalanın hepsini ona ver (Kuruş farkını düzeltmek için)
+                if (index === allRentalItems.length - 1) {
+                    // 2 ondalık basamağa yuvarla (floating point hatasını önle)
+                    item.finalPrice = Math.round(remainingToDistribute * 100) / 100;
+                } else {
+                    // Oranla: (ItemFiyatı / ToplamStandart) * HedefToplam
+                    const ratio = item.originalPrice / totalStandardPrice;
+                    let share = targetTotal * ratio;
+                    share = Math.round(share * 100) / 100; // 2 hane yuvarla
+                    
+                    item.finalPrice = share;
+                    remainingToDistribute -= share;
+                }
+            });
+        } else {
+            // Orijinal fiyat 0 ise hepsi 0
+            allRentalItems.forEach(item => item.finalPrice = 0);
+        }
+
+        // Payload Hazır (Gereksiz alanları temizle)
+        const rentalsPayload = allRentalItems.map(item => ({
+            marketplaceId: item.marketplaceId,
+            stallId: item.stallId,
+            stallNumber: item.stallNumber,
+            ownerId: item.ownerId,
+            tenantId: item.tenantId,
+            tenantName: item.tenantName,
+            price: item.finalPrice, // <-- ARTIK KURUŞU KURUŞUNA DENK
+            dateString: item.dateString,
+            date: item.date
+        }));
+
         const dayNamesStr = isMonthMode 
             ? selectedWeekdays.map(d => SHORT_DAY_LABELS[d]).join(', ') 
             : SHORT_DAY_LABELS[ALL_DAYS[selectedDate.getDay()]];
 
-        Alert.alert('Kiralama Özeti', `${targetStallsList.length} Tahta\nGünler: ${dayNamesStr}\n\nToplam: ${Math.round(totalAmount)} ₺`, [
+        Alert.alert(
+          'Kiralama Özeti',
+          `${targetStallsList.length} Tahta\nGünler: ${dayNamesStr}\n\nToplam: ${targetTotal.toLocaleString('tr-TR')} ₺`,
+          [
             { text: 'İptal', style: 'cancel' },
             { text: 'Onayla', onPress: () => submitRentals(rentalsPayload) }
-        ]);
+          ]
+        );
+
     } catch (error) {
-        console.error("Müsaitlik Hatası Detayı:", error);
-        Alert.alert("Hata", "Müsaitlik kontrolü yapılamadı.");
+        console.error("Beklenmedik Hata:", error);
+        Alert.alert("Hata", "İşlem sırasında bir hata oluştu.");
     }
   };
 
@@ -455,6 +536,8 @@ export default function StallsScreen({ route }) {
     );
   };
 
+  // isCustomPrice'ı burada tanımlamaya gerek yok, fonksiyon içinde tanımladık.
+  
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -484,14 +567,13 @@ export default function StallsScreen({ route }) {
         <TouchableOpacity onPress={() => changeDate(-1)} style={styles.arrowBtn}>
           <Ionicons name="chevron-back" size={24} color={isMarketOpenToday ? COLORS.primary : COLORS.danger} />
         </TouchableOpacity>
-        
         <TouchableOpacity onPress={() => setCalendarVisible(true)} style={{alignItems: 'center', padding: 5}}>
           <View style={{flexDirection:'row', alignItems:'center'}}>
              <Text style={[styles.dateText, !isMarketOpenToday && {color: COLORS.danger}]}>{formatDateDisplay(selectedDate)}</Text>
+             <Ionicons name="calendar-outline" size={18} color={isMarketOpenToday ? COLORS.primary : COLORS.danger} style={{marginLeft: 6}} />
           </View>
           <Text style={[styles.subDateText, !isMarketOpenToday && {color: COLORS.danger}]}>{isMarketOpenToday ? 'Pazar Açık' : 'PAZAR KAPALI'}</Text>
         </TouchableOpacity>
-
         <TouchableOpacity onPress={() => changeDate(1)} style={styles.arrowBtn}>
           <Ionicons name="chevron-forward" size={24} color={isMarketOpenToday ? COLORS.primary : COLORS.danger} />
         </TouchableOpacity>
@@ -525,6 +607,7 @@ export default function StallsScreen({ route }) {
         )}
       </View>
 
+      {/* MODALLAR AYNI KALDI */}
       <Modal visible={calendarVisible} animationType="fade" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.calendarModalContainer}>
@@ -533,10 +616,8 @@ export default function StallsScreen({ route }) {
               firstDay={1}
               current={formatDateKey(selectedDate)}
               onDayPress={day => {
-
                 const [y, m, d] = day.dateString.split('-').map(Number);
                 const safeDate = new Date(y, m - 1, d, 12, 0, 0);
-                
                 setSelectedDate(safeDate);
                 setCalendarVisible(false);
               }}
@@ -683,22 +764,8 @@ const styles = StyleSheet.create({
   bottomBarText: { fontSize: 16, fontWeight: '700', color: COLORS.textDark },
   bottomBarButton: { backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
   bottomBarButtonText: { color: '#fff', fontWeight: '700' },
-  
-  // ORTALANMIŞ MODAL STİLLERİ
-  modalOverlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.5)', 
-    justifyContent: 'center', 
-    alignItems: 'center', // <-- EKLENDİ: Yatay ortalama
-    padding: 20 
-  },
-  modalContainer: { 
-    backgroundColor: '#fff', 
-    borderRadius: 16, 
-    padding: 20, 
-    maxHeight: '90%', 
-    width: '100%' // <-- EKLENDİ: Genişlik korunsun
-  },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20, alignItems: 'center' },
+  modalContainer: { backgroundColor: '#fff', borderRadius: 16, padding: 20, maxHeight: '90%', width: '100%' },
   modalTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 5 },
   subTitle: { textAlign: 'center', color: COLORS.textLight, marginBottom: 15 },
   switchContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 10, padding: 10, backgroundColor: '#F9F9F9', borderRadius: 8 },
@@ -732,15 +799,7 @@ const styles = StyleSheet.create({
   priceInputRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   dayLabel: { width: 80, fontSize: 14, color: COLORS.textDark },
   smallInput: { flex: 1, backgroundColor: '#F2F2F7', padding: 8, borderRadius: 6, color: COLORS.textDark, textAlign: 'right' },
-  
-  // TAKVİM MODAL STİLLERİ (GÜNCELLENDİ)
-  calendarModalContainer: { 
-    backgroundColor: '#fff', 
-    borderRadius: 16, 
-    padding: 10, 
-    width: '100%', // <-- Overlay padding ile uyumlu olsun
-    alignSelf: 'center'
-  },
+  calendarModalContainer: { backgroundColor: '#fff', borderRadius: 16, padding: 10, width: '100%', alignSelf: 'center' },
   closeCalendarBtn: { marginTop: 15, backgroundColor: '#F2F2F7', padding: 12, borderRadius: 8, alignItems: 'center' },
   closeCalendarText: { color: COLORS.textDark, fontWeight: 'bold' }
 });
