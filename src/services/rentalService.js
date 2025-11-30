@@ -1,7 +1,7 @@
 import { db } from '../config/firebase';
 import { 
   collection, addDoc, deleteDoc, updateDoc, doc, 
-  query, where, orderBy, onSnapshot, writeBatch, getDocs 
+  query, where, orderBy, onSnapshot, writeBatch, getDocs, increment 
 } from 'firebase/firestore';
 
 const RENTALS_COLLECTION = 'rentals';
@@ -43,7 +43,6 @@ export const subscribeToRentalsByDate = (marketId, dateString, callback) => {
 // Kiralama Yap (Batch)
 export const createRental = async (rentalsDataArray) => {
   const batch = writeBatch(db);
-  
   const groupId = rentalsDataArray.length > 1 ? `GROUP_${Date.now()}` : null;
 
   rentalsDataArray.forEach(rental => {
@@ -52,7 +51,8 @@ export const createRental = async (rentalsDataArray) => {
       ...rental,
       groupId: groupId,
       createdAt: new Date(),
-      isPaid: false
+      isPaid: false,
+      paidAmount: 0
     });
   });
 
@@ -146,6 +146,57 @@ export const markRentalsPaidBatch = async (rentalIds, isPaidStatus) => {
     await batch.commit();
   } catch (error) {
     console.error("Toplu güncelleme hatası:", error);
+    throw error;
+  }
+};
+
+export const addPayment = async (item, amountToAdd) => {
+  try {
+    const batch = writeBatch(db);
+    const amount = parseFloat(amountToAdd);
+
+    if (item.isGroup) {
+      // GRUP ÖDEMESİ:
+      // Girilen tutarı, gruptaki öğe sayısına bölerek her birine eşit dağıtıyoruz.
+      // Bu sayede matematiksel bütünlük korunur.
+      const q = query(collection(db, RENTALS_COLLECTION), where('groupId', '==', item.id));
+      const snapshot = await getDocs(q);
+      
+      const count = snapshot.size;
+      if (count === 0) return;
+
+      const amountPerItem = amount / count;
+
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const newPaidAmount = (data.paidAmount || 0) + amountPerItem;
+        const totalPrice = parseFloat(data.price) || 0;
+        
+        // Eğer ödenen miktar toplam fiyatı geçtiyse veya eşitse "Ödendi" işaretle
+        // Ufak kuruş hatalarını önlemek için 0.1 tolerans
+        const isFullyPaid = newPaidAmount >= (totalPrice - 0.1); 
+
+        batch.update(docSnap.ref, {
+          paidAmount: increment(amountPerItem),
+          isPaid: isFullyPaid
+        });
+      });
+
+    } else {
+      // TEKLİ ÖDEME
+      const ref = doc(db, RENTALS_COLLECTION, item.id);
+      const newPaidAmount = (item.paidAmount || 0) + amount;
+      const isFullyPaid = newPaidAmount >= (item.price - 0.1);
+
+      batch.update(ref, {
+        paidAmount: increment(amount),
+        isPaid: isFullyPaid
+      });
+    }
+
+    await batch.commit();
+  } catch (error) {
+    console.error("Ödeme ekleme hatası:", error);
     throw error;
   }
 };
