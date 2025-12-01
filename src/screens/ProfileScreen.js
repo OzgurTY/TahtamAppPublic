@@ -1,10 +1,10 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert, Modal, TextInput, StatusBar, ScrollView,
-  KeyboardAvoidingView, Platform 
+  KeyboardAvoidingView, Platform, Switch // Switch Eklendi
 } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
-import { logoutUser, updateUserProfile, deleteUserAccount } from '../services/authService'; // deleteUserAccount eklendi
+import { logoutUser, updateUserProfile, deleteUserAccount } from '../services/authService';
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -15,6 +15,10 @@ export default function ProfileScreen() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [formPhone, setFormPhone] = useState('');
   const [formIban, setFormIban] = useState('');
+  
+  // YENİ: Bildirim Tercihi State'i
+  // Varsayılan olarak true (açık) kabul edelim, veritabanında yoksa true olsun
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
   const isOwner = userProfile?.role === 'OWNER';
 
@@ -25,7 +29,6 @@ export default function ProfileScreen() {
     ]);
   };
 
-  // HESAP SİLME FONKSİYONU
   const handleDeleteAccount = () => {
     Alert.alert(
       "Hesabı Sil",
@@ -34,13 +37,11 @@ export default function ProfileScreen() {
         { text: "Vazgeç", style: "cancel" },
         { 
           text: "Sil", 
-          style: "destructive", // Kırmızı gösterir
+          style: "destructive",
           onPress: async () => {
             try {
               await deleteUserAccount();
-              // AuthContext durumu otomatik algılayıp Login ekranına atacaktır.
             } catch (error) {
-              // Firebase güvenlik kuralı gereği, uzun süre önce giriş yapılmışsa tekrar giriş ister
               Alert.alert(
                 "Hata", 
                 "Güvenlik gereği hesabınızı silmek için lütfen çıkış yapıp tekrar giriş yapın, ardından tekrar deneyin."
@@ -55,23 +56,29 @@ export default function ProfileScreen() {
   const openSettings = () => {
     setFormPhone(userProfile?.phone || '');
     setFormIban(userProfile?.iban || '');
+    // Profildeki ayarı al, yoksa varsayılan true olsun
+    setNotificationsEnabled(userProfile?.notificationsEnabled !== false);
     setSettingsVisible(true);
   };
 
   const handleSaveSettings = async () => {
     try {
       const updates = {
-        phone: formPhone
+        phone: formPhone,
+        notificationsEnabled: notificationsEnabled // YENİ: Tercihi kaydet
       };
+      
       if (isOwner) {
         updates.iban = formIban;
       }
 
       await updateUserProfile(user.uid, updates);
+      
+      // Context'i güncelle
       setUserProfile({ ...userProfile, ...updates });
       
       setSettingsVisible(false);
-      Alert.alert("Başarılı", "Bilgileriniz güncellendi.");
+      Alert.alert("Başarılı", "Ayarlarınız güncellendi.");
     } catch (error) {
       Alert.alert("Hata", "Güncelleme yapılamadı.");
     }
@@ -153,6 +160,21 @@ export default function ProfileScreen() {
                 </View>
               </>
             )}
+
+            <View style={styles.divider} />
+            
+            {/* BİLDİRİM DURUMU GÖSTERİMİ */}
+            <View style={styles.infoRow}>
+              <View style={styles.iconBox}>
+                <Ionicons name="notifications" size={20} color={COLORS.primary} />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Bildirimler</Text>
+                <Text style={[styles.infoValue, {color: userProfile?.notificationsEnabled !== false ? COLORS.success : COLORS.textLight}]}>
+                  {userProfile?.notificationsEnabled !== false ? 'Açık' : 'Kapalı'}
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
 
@@ -172,13 +194,15 @@ export default function ProfileScreen() {
           <View style={styles.modalOverlay}>
               <View style={styles.modalContainer}>
                   <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>Bilgileri Düzenle</Text>
+                    <Text style={styles.modalTitle}>Ayarlar</Text>
                     <TouchableOpacity onPress={() => setSettingsVisible(false)}>
                       <Ionicons name="close" size={24} color={COLORS.textLight} />
                     </TouchableOpacity>
                   </View>
 
                   <ScrollView contentContainerStyle={{paddingBottom: 20}} showsVerticalScrollIndicator={false}>
+                    
+                    <Text style={styles.sectionHeader}>İletişim Bilgileri</Text>
                     <Text style={styles.inputLabel}>Telefon Numarası</Text>
                     <TextInput 
                         style={styles.input}
@@ -197,11 +221,26 @@ export default function ProfileScreen() {
                             value={formIban}
                             onChangeText={setFormIban}
                         />
-                        <Text style={styles.helperText}>
-                          Kiracılarınız ödeme yaparken bu IBAN'ı görecektir.
-                        </Text>
                       </>
                     )}
+
+                    <View style={styles.divider} />
+                    
+                    {/* BİLDİRİM AYARI (SWITCH) */}
+                    <Text style={styles.sectionHeader}>Uygulama Tercihleri</Text>
+                    <View style={styles.switchRow}>
+                        <View>
+                            <Text style={styles.switchLabel}>Bildirimleri Aç</Text>
+                            <Text style={styles.switchSubLabel}>Kiralama ve ödeme bildirimleri al.</Text>
+                        </View>
+                        <Switch
+                            trackColor={{ false: "#767577", true: COLORS.primary }}
+                            thumbColor={notificationsEnabled ? "#fff" : "#f4f3f4"}
+                            ios_backgroundColor="#3e3e3e"
+                            onValueChange={() => setNotificationsEnabled(previousState => !previousState)}
+                            value={notificationsEnabled}
+                        />
+                    </View>
 
                     <View style={styles.modalActions}>
                         <TouchableOpacity style={styles.cancelBtn} onPress={() => setSettingsVisible(false)}>
@@ -212,7 +251,6 @@ export default function ProfileScreen() {
                         </TouchableOpacity>
                     </View>
 
-                    {/* HESAP SİLME BUTONU */}
                     <View style={styles.deleteAccountContainer}>
                         <TouchableOpacity style={styles.deleteAccountBtn} onPress={handleDeleteAccount}>
                             <Text style={styles.deleteAccountText}>Hesabımı Kalıcı Olarak Sil</Text>
@@ -276,22 +314,26 @@ const styles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContainer: { 
     backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, 
-    padding: 24, minHeight: '50%', ...SHADOWS.medium 
+    padding: 24, minHeight: '60%', ...SHADOWS.medium 
   },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.textDark },
   
-  inputLabel: { fontSize: 14, fontWeight: '600', color: COLORS.textDark, marginBottom: 8, marginTop: 10 },
-  input: { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 12, fontSize: 16, borderWidth: 1, borderColor: '#E9ECEF' },
-  helperText: { fontSize: 12, color: COLORS.textLight, marginTop: 6, fontStyle: 'italic' },
+  sectionHeader: { fontSize: 16, fontWeight: '700', color: COLORS.primary, marginTop: 10, marginBottom: 10 },
+  inputLabel: { fontSize: 14, fontWeight: '600', color: COLORS.textDark, marginBottom: 8 },
+  input: { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 12, fontSize: 16, borderWidth: 1, borderColor: '#E9ECEF', marginBottom: 15 },
+  
+  // SWITCH STİLLERİ
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15, paddingVertical: 5 },
+  switchLabel: { fontSize: 16, fontWeight: '600', color: COLORS.textDark },
+  switchSubLabel: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
 
-  modalActions: { flexDirection: 'row', marginTop: 30 },
+  modalActions: { flexDirection: 'row', marginTop: 20 },
   cancelBtn: { flex: 1, padding: 16, alignItems: 'center', marginRight: 12, backgroundColor: '#F5F5F5', borderRadius: 12 },
   saveBtn: { flex: 2, backgroundColor: COLORS.primary, padding: 16, borderRadius: 12, alignItems: 'center' },
   cancelBtnText: { color: COLORS.textLight, fontWeight: '700' },
   saveBtnText: { color: '#fff', fontWeight: '700' },
 
-  // HESAP SİLME BUTON STİLLERİ
   deleteAccountContainer: { marginTop: 40, borderTopWidth: 1, borderTopColor: '#f0f0f0', paddingTop: 20 },
   deleteAccountBtn: { alignItems: 'center', padding: 10 },
   deleteAccountText: { color: COLORS.danger, fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' }
