@@ -11,6 +11,7 @@ import {
 } from '../services/rentalService';
 import { getUserProfile } from '../services/authService'; 
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
+import { sendPushNotification } from '../services/notificationService';
 
 // KART BİLEŞENİ (AYNI)
 const RentalCard = ({ item, canManage, isSelectionMode, isSelected, onPaymentPress, onDelete, onShowIban, onSelect }) => {
@@ -297,8 +298,26 @@ export default function RentalsScreen() {
         
         setPaymentModalVisible(false);
         setPaymentAmountInput('');
-        setSelectedRentalForPayment(null);
+        
         Alert.alert("Başarılı", paymentType === 'COLLECT' ? "Ödeme kaydedildi." : "Düzeltme yapıldı.");
+
+        if (paymentType === 'COLLECT' && selectedRentalForPayment.tenantId) {
+            const tenantData = await getUserProfile(selectedRentalForPayment.tenantId);
+            
+            if (tenantData?.pushToken) {
+                const stallInfo = selectedRentalForPayment.isGroup 
+                    ? selectedRentalForPayment.summaryText 
+                    : selectedRentalForPayment.stallNumber;
+
+                await sendPushNotification(
+                    tenantData.pushToken,
+                    "✅ Ödemeniz Alındı",
+                    `${stallInfo} için ${amount} TL tutarındaki ödemeniz onaylandı. Teşekkürler!`
+                );
+            }
+        }
+
+        setSelectedRentalForPayment(null);
 
     } catch (error) {
         Alert.alert("Hata", "İşlem kaydedilemedi.");

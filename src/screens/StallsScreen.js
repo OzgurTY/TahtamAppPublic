@@ -12,6 +12,8 @@ import { subscribeToTenants } from '../services/tenantService';
 import { createRental, deleteRental, subscribeToRentalsByDate, checkAvailability } from '../services/rentalService';
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
 import { AuthContext } from '../context/AuthContext';
+import { getUserProfile } from '../services/authService';
+import { sendPushNotification } from '../services/notificationService';
 
 // --- TAKVİM DİL AYARLARI ---
 LocaleConfig.locales['tr'] = {
@@ -486,7 +488,32 @@ export default function StallsScreen({ route }) {
       setRentalModalVisible(false);
       setIsSelectionMode(false);
       setSelectedStallIds([]);
+      
       Alert.alert('Başarılı', 'Kiralama tamamlandı.');
+
+      // --- YENİ: BİLDİRİM GÖNDERME ---
+      // Payload içindeki benzersiz ownerId'leri bul (Genelde hepsi aynıdır ama toplu işlemde farklı olabilir)
+      const uniqueOwners = [...new Set(payload.map(item => item.ownerId))];
+      
+      // Her bir tahta sahibine bildirim at
+      uniqueOwners.forEach(async (ownerId) => {
+        if (ownerId) {
+            const ownerProfile = await getUserProfile(ownerId);
+            if (ownerProfile?.pushToken) {
+                // Mesaj: "Ahmet Yılmaz yeni bir kiralama yaptı!"
+                const tenantName = userProfile?.fullName || "Bir kiracı";
+                const count = payload.filter(p => p.ownerId === ownerId).length;
+                
+                await sendPushNotification(
+                    ownerProfile.pushToken, 
+                    "🔔 Yeni Kiralama Var!", 
+                    `${tenantName}, ${count} adet işlem gerçekleştirdi. Detaylar için tıklayın.`
+                );
+            }
+        }
+      });
+      // -------------------------------
+
     } catch (error) { Alert.alert('Hata', 'Kiralama yapılamadı.'); }
   };
 
