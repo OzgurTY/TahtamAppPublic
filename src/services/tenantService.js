@@ -1,5 +1,5 @@
 import { db } from '../config/firebase';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, getDoc } from 'firebase/firestore';
 
 const COLLECTION_NAME = 'tenants';
 
@@ -25,6 +25,21 @@ export const addTenant = async (tenantData) => {
     createdAt: new Date()
   };
   await addDoc(collection(db, COLLECTION_NAME), payload);
+};
+
+export const getTenant = async (id) => {
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data();
+    } else {
+      return null;
+    }
+  } catch (error) {
+    console.error("Kiracı çekme hatası:", error);
+    return null;
+  }
 };
 
 export const updateTenant = async (id, tenantData) => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { 
   View, Text, FlatList, StyleSheet, SafeAreaView, StatusBar, 
-  TouchableOpacity, Alert, Modal, Clipboard, TextInput, KeyboardAvoidingView, Platform 
+  TouchableOpacity, Alert, Modal, Clipboard, TextInput, KeyboardAvoidingView, Platform, Linking 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
@@ -10,22 +10,43 @@ import {
   deleteRentalGroup, addPayment 
 } from '../services/rentalService';
 import { getUserProfile } from '../services/authService'; 
+import { getTenant } from '../services/tenantService';
+import { subscribeToMarketplaces } from '../services/marketplaceService'; // YENİ: Market isimleri için
 import { COLORS, SHADOWS, LAYOUT } from '../styles/theme';
-import { sendPushNotification } from '../services/notificationService';
 
-// KART BİLEŞENİ (AYNI)
-const RentalCard = ({ item, canManage, isSelectionMode, isSelected, onPaymentPress, onDelete, onShowIban, onSelect }) => {
-  const [ownerName, setOwnerName] = useState('Yükleniyor...');
+// KART BİLEŞENİ (GÜNCELLENDİ)
+const RentalCard = ({ 
+  item, canManage, isSelectionMode, isSelected, 
+  onPaymentPress, onDelete, onShowIban, onSelect, 
+  marketplacesMap, ownerProfile // YENİ PROPLAR
+}) => {
+  const [counterpartName, setCounterpartName] = useState('Yükleniyor...');
+  const [counterpartPhone, setCounterpartPhone] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
-    const targetOwnerId = item.isGroup ? item.firstRecord.ownerId : item.ownerId;
+    
+    const fetchCounterpartInfo = async () => {
+        const targetId = canManage 
+            ? (item.isGroup ? item.firstRecord.tenantId : item.tenantId)
+            : (item.isGroup ? item.firstRecord.ownerId : item.ownerId);
 
-    if (!canManage && targetOwnerId) {
-      getUserProfile(targetOwnerId).then(profile => {
-        if (isMounted && profile) setOwnerName(profile.fullName);
-      });
-    }
+        if (targetId) {
+            let profile = await getUserProfile(targetId);
+            if (!profile && canManage) {
+                profile = await getTenant(targetId);
+            }
+
+            if (isMounted && profile) {
+                setCounterpartName(profile.fullName);
+                setCounterpartPhone(profile.phone);
+            } else if (isMounted) {
+                setCounterpartName("Bilinmeyen Kullanıcı");
+            }
+        }
+    };
+
+    fetchCounterpartInfo();
     return () => { isMounted = false; };
   }, [item, canManage]);
 
@@ -33,6 +54,60 @@ const RentalCard = ({ item, canManage, isSelectionMode, isSelected, onPaymentPre
 
   const handlePress = () => {
     if (isSelectionMode) onSelect(item.id);
+  };
+
+  // --- GELİŞMİŞ WHATSAPP FONKSİYONU ---
+  const handleWhatsApp = () => {
+    if (!counterpartPhone) return Alert.alert("Hata", "Kullanıcının telefon numarası kayıtlı değil.");
+    
+    // 1. Numara Temizleme (Sadece Rakamlar)
+    let cleanPhone = counterpartPhone.replace(/[^\d]/g, '');
+    // 90 Ekleme (Eğer başında yoksa)
+    if (cleanPhone.startsWith('0')) cleanPhone = '90' + cleanPhone.substring(1);
+    else if (!cleanPhone.startsWith('90') && cleanPhone.length === 10) cleanPhone = '90' + cleanPhone;
+
+    // 2. Detaylı Bilgiler
+    const marketName = marketplacesMap[item.marketplaceId] || "Pazaryeri";
+    const stallInfo = item.isGroup ? item.summaryText : item.stallNumber;
+    const dateInfo = item.isGroup ? item.customDateText : formattedDate;
+    const remaining = item.price - (item.paidAmount || 0);
+
+    // 3. Profesyonel Mesaj Şablonu
+    let message = `Sayın *${counterpartName}*,\n\n`;
+    message += `*${marketName}* - *${stallInfo}* kiralama işleminiz hakkında bilgilendirmedir.\n\n`;
+    message += `📅 *Tarih:* ${dateInfo}\n`;
+    message += `💰 *Toplam Tutar:* ${item.price.toLocaleString('tr-TR')} ₺\n`;
+
+    if (item.isPaid) {
+        message += `✅ *Durum:* ÖDEME ALINDI\n\nİlginiz için teşekkür ederiz.`;
+    } else {
+        message += `⚠️ *Kalan Tutar:* ${remaining.toLocaleString('tr-TR')} ₺\n\n`;
+        
+        // Eğer Owner'ın IBAN bilgisi varsa ekle
+        if (ownerProfile && ownerProfile.iban) {
+            message += `--------------------------------\n`;
+            message += `*Ödeme Bilgileri:*\n`;
+            message += `👤 *Alıcı:* ${ownerProfile.fullName}\n`;
+            // IBAN'ın başına TR koymayı garantiye al
+            const ibanClean = ownerProfile.iban.toUpperCase().replace(/TR/g, '').replace(/\s/g, '');
+            message += `🏦 *IBAN:* TR${ibanClean}\n`;
+            message += `--------------------------------\n\n`;
+        }
+
+        message += `Ödemenizi yaptıktan sonra dekont paylaşmanızı rica ederiz. Bol kazançlar dileriz.`;
+    }
+
+    // 4. Link Oluşturma
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    
+    Linking.openURL(url).catch((err) => {
+        Alert.alert("Hata", "WhatsApp açılamadı. Cihazınızda yüklü olduğundan emin olun.");
+    });
+  };
+
+  const handleCall = () => {
+    if (!counterpartPhone) return Alert.alert("Hata", "Telefon numarası bulunamadı.");
+    Linking.openURL(`tel:${counterpartPhone}`);
   };
 
   let statusText = 'BEKLİYOR';
@@ -85,7 +160,7 @@ const RentalCard = ({ item, canManage, isSelectionMode, isSelected, onPaymentPre
                       <Text style={styles.subText}>
                           {canManage 
                           ? `Kiracı: ${item.tenantName}` 
-                          : `Tahta Sahibi: ${ownerName}`} 
+                          : `Tahta Sahibi: ${counterpartName}`} 
                       </Text>
                       
                       {item.isGroup && <Text style={styles.dateRangeText}>{item.dateRange}</Text>}
@@ -105,27 +180,37 @@ const RentalCard = ({ item, canManage, isSelectionMode, isSelected, onPaymentPre
 
         {!isSelectionMode && (
             <View style={styles.cardFooter}>
-            {canManage ? (
-                <TouchableOpacity 
-                    style={[styles.actionButton, { backgroundColor: item.isPaid ? COLORS.success : COLORS.primary }]} // Ödendiyse yeşil kalabilir
-                    onPress={() => onPaymentPress(item)}
-                >
-                    <Ionicons name={item.isPaid ? "create-outline" : "wallet-outline"} size={18} color="#fff" />
-                    <Text style={[styles.actionText, { color: '#fff' }]}>
-                        {item.isPaid ? 'Düzenle / İade' : 'Ödeme Al'}
-                    </Text>
-                </TouchableOpacity>
-            ) : (
-                !item.isPaid && (
-                <TouchableOpacity 
-                    style={[styles.actionButton, { backgroundColor: COLORS.secondary }]}
-                    onPress={() => onShowIban(item.isGroup ? item.firstRecord.ownerId : item.ownerId)}
-                >
-                    <Ionicons name="card" size={18} color="#fff" />
-                    <Text style={[styles.actionText, { color: '#fff' }]}>Ödeme Yap (IBAN Göster)</Text>
-                </TouchableOpacity>
-                )
-            )}
+                {canManage ? (
+                    <View style={{flexDirection: 'row', width: '100%'}}>
+                        <TouchableOpacity style={[styles.contactBtn, { backgroundColor: '#25D366', marginRight: 8 }]} onPress={handleWhatsApp}>
+                            <Ionicons name="logo-whatsapp" size={20} color="#fff" />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.contactBtn, { backgroundColor: '#007AFF', marginRight: 8 }]} onPress={handleCall}>
+                            <Ionicons name="call" size={20} color="#fff" />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity 
+                            style={[styles.actionButton, { flex: 1, backgroundColor: item.isPaid ? COLORS.success : COLORS.primary }]}
+                            onPress={() => onPaymentPress(item)}
+                        >
+                            <Ionicons name={item.isPaid ? "create-outline" : "wallet-outline"} size={18} color="#fff" />
+                            <Text style={[styles.actionText, { color: '#fff' }]}>
+                                {item.isPaid ? 'Düzenle' : 'Ödeme Al'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : (
+                    !item.isPaid && (
+                        <TouchableOpacity 
+                            style={[styles.actionButton, { backgroundColor: COLORS.secondary }]}
+                            onPress={() => onShowIban(item.isGroup ? item.firstRecord.ownerId : item.ownerId)}
+                        >
+                            <Ionicons name="card" size={18} color="#fff" />
+                            <Text style={[styles.actionText, { color: '#fff' }]}>Ödeme Yap (IBAN Göster)</Text>
+                        </TouchableOpacity>
+                    )
+                )}
             </View>
         )}
       </TouchableOpacity>
@@ -139,27 +224,35 @@ export default function RentalsScreen() {
   const [filteredRentals, setFilteredRentals] = useState([]);
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(true);
+  
+  // YENİ: Market İsimleri Haritası
+  const [marketplacesMap, setMarketplacesMap] = useState({});
 
-  // SEÇİM MODU
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]); 
 
-  // MODALLAR
   const [ibanModalVisible, setIbanModalVisible] = useState(false);
   const [currentOwnerIban, setCurrentOwnerIban] = useState('');
   const [currentOwnerName, setCurrentOwnerName] = useState('');
 
-  // ÖDEME MODALI STATE
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [selectedRentalForPayment, setSelectedRentalForPayment] = useState(null);
   const [paymentAmountInput, setPaymentAmountInput] = useState('');
-  
-  // YENİ: İŞLEM TÜRÜ (Tahsilat / Düzeltme)
-  const [paymentType, setPaymentType] = useState('COLLECT'); // 'COLLECT' or 'CORRECT'
+  const [paymentType, setPaymentType] = useState('COLLECT'); 
 
   const canManage = userProfile?.role === 'OWNER' || userProfile?.role === 'ADMIN';
 
-  // 1. Verileri Çek
+  // 1. Market İsimlerini Çek (Map oluştur)
+  useEffect(() => {
+    const unsubscribe = subscribeToMarketplaces((data) => {
+        const map = {};
+        data.forEach(m => { map[m.id] = m.name; });
+        setMarketplacesMap(map);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Kiralama Verilerini Çek
   useEffect(() => {
     if (user && userProfile) {
       const unsubscribe = subscribeToRentalsByRole(user.uid, userProfile.role, (data) => {
@@ -170,7 +263,7 @@ export default function RentalsScreen() {
     }
   }, [user, userProfile]);
 
-  // 2. Gruplama Mantığı
+  // 3. Gruplama Mantığı (AYNI)
   useEffect(() => {
     if (rentals.length === 0) {
         setGroupedRentals([]);
@@ -200,7 +293,6 @@ export default function RentalsScreen() {
             groups[item.groupId].price += (parseFloat(item.price) || 0);
             groups[item.groupId].paidAmount += (parseFloat(item.paidAmount) || 0);
             groups[item.groupId].dates.push(item.date);
-            
             if (!item.isPaid) groups[item.groupId].isPaid = false; 
         } else {
             singles.push(item);
@@ -236,7 +328,6 @@ export default function RentalsScreen() {
 
   }, [rentals]);
 
-  // Arama
   useEffect(() => {
     if (searchText.trim() === '') {
       setFilteredRentals(groupedRentals);
@@ -255,73 +346,32 @@ export default function RentalsScreen() {
 
   const handleOpenPaymentModal = (item) => {
     if (!canManage) return;
-    
-    // Varsayılan olarak kalan borcu göster
     const remaining = item.price - (item.paidAmount || 0);
     setPaymentAmountInput(remaining > 0 ? Math.round(remaining).toString() : '');
-    
-    setPaymentType('COLLECT'); // Varsayılan Tahsilat
+    setPaymentType('COLLECT'); 
     setSelectedRentalForPayment(item);
     setPaymentModalVisible(true);
   };
 
   const handleSavePayment = async () => {
     if (!selectedRentalForPayment || !paymentAmountInput) return;
-
     try {
         let amount = parseFloat(paymentAmountInput);
-        if (isNaN(amount) || amount <= 0) {
-            Alert.alert("Hata", "Geçerli bir tutar giriniz.");
-            return;
-        }
-
-        // Eğer 'Düzeltme' seçildiyse tutarı eksiye çevir
-        if (paymentType === 'CORRECT') {
-            amount = -amount;
-        }
-
-        // Limit Kontrolleri
+        if (isNaN(amount) || amount <= 0) return Alert.alert("Hata", "Geçerli bir tutar giriniz.");
+        if (paymentType === 'CORRECT') amount = -amount;
+        
         const currentPaid = selectedRentalForPayment.paidAmount || 0;
         const remaining = selectedRentalForPayment.price - currentPaid;
 
-        if (paymentType === 'COLLECT' && amount > remaining + 1) {
-             Alert.alert("Hata", `Kalan borçtan (${Math.round(remaining)} TL) fazla ödeme giremezsiniz.`);
-             return;
-        }
-        
-        if (paymentType === 'CORRECT' && Math.abs(amount) > currentPaid) {
-             Alert.alert("Hata", `Daha önce ödenen tutardan (${Math.round(currentPaid)} TL) fazlasını silemezsiniz.`);
-             return;
-        }
+        if (paymentType === 'COLLECT' && amount > remaining + 1) return Alert.alert("Hata", "Kalan borçtan fazla ödeme giremezsiniz.");
+        if (paymentType === 'CORRECT' && Math.abs(amount) > currentPaid) return Alert.alert("Hata", "Ödenen tutardan fazlasını silemezsiniz.");
 
         await addPayment(selectedRentalForPayment, amount);
-        
         setPaymentModalVisible(false);
         setPaymentAmountInput('');
-        
-        Alert.alert("Başarılı", paymentType === 'COLLECT' ? "Ödeme kaydedildi." : "Düzeltme yapıldı.");
-
-        if (paymentType === 'COLLECT' && selectedRentalForPayment.tenantId) {
-            const tenantData = await getUserProfile(selectedRentalForPayment.tenantId);
-            
-            if (tenantData?.pushToken) {
-                const stallInfo = selectedRentalForPayment.isGroup 
-                    ? selectedRentalForPayment.summaryText 
-                    : selectedRentalForPayment.stallNumber;
-
-                await sendPushNotification(
-                    tenantData.pushToken,
-                    "✅ Ödemeniz Alındı",
-                    `${stallInfo} için ${amount} TL tutarındaki ödemeniz onaylandı. Teşekkürler!`
-                );
-            }
-        }
-
         setSelectedRentalForPayment(null);
-
-    } catch (error) {
-        Alert.alert("Hata", "İşlem kaydedilemedi.");
-    }
+        Alert.alert("Başarılı", paymentType === 'COLLECT' ? "Ödeme kaydedildi." : "Düzeltme yapıldı.");
+    } catch (error) { Alert.alert("Hata", "İşlem kaydedilemedi."); }
   };
 
   const handleDelete = (item) => {
@@ -329,7 +379,6 @@ export default function RentalsScreen() {
     const message = item.isGroup 
         ? `Bu toplu kiralamayı (${item.count} işlem) silmek istediğine emin misin?` 
         : 'Bu kaydı silmek istediğine emin misin?';
-
     Alert.alert('Sil', message, [
       { text: 'İptal', style: 'cancel' },
       { text: 'Sil', style: 'destructive', onPress: () => {
@@ -339,7 +388,7 @@ export default function RentalsScreen() {
     ]);
   };
 
-  const handleShowIban = async (ownerId) => { /* ... AYNI ... */
+  const handleShowIban = async (ownerId) => {
     try {
       const ownerData = await getUserProfile(ownerId);
       if (ownerData && ownerData.iban) {
@@ -350,7 +399,7 @@ export default function RentalsScreen() {
     } catch (error) { Alert.alert("Hata", "Bilgiler alınamadı."); }
   };
 
-  const copyToClipboard = () => { /* ... AYNI ... */
+  const copyToClipboard = () => {
     Clipboard.setString(currentOwnerIban);
     Alert.alert("Kopyalandı", "IBAN panoya kopyalandı.");
   };
@@ -366,7 +415,7 @@ export default function RentalsScreen() {
     else setSelectedIds([...selectedIds, id]);
   };
 
-  const handleBatchDelete = () => { /* ... AYNI ... */
+  const handleBatchDelete = () => {
     if (selectedIds.length === 0) return;
     const groupIds = [];
     const docIds = [];
@@ -423,6 +472,9 @@ export default function RentalsScreen() {
             onPaymentPress={handleOpenPaymentModal}
             onDelete={handleDelete}
             onShowIban={handleShowIban}
+            // YENİ PROPLAR:
+            marketplacesMap={marketplacesMap}
+            ownerProfile={userProfile} 
           />
         )}
       />
@@ -441,86 +493,44 @@ export default function RentalsScreen() {
           </View>
       )}
 
-      {/* GÜNCELLENEN ÖDEME MODALI */}
+      {/* ÖDEME MODALI */}
       <Modal visible={paymentModalVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
                 <Text style={styles.modalTitle}>İşlem Detayı</Text>
-                
                 {selectedRentalForPayment && (
                     <View style={{width:'100%', marginBottom: 20}}>
                         <Text style={{textAlign:'center', color:COLORS.textLight, marginBottom:5}}>Toplam Borç</Text>
-                        <Text style={{textAlign:'center', fontSize:20, fontWeight:'bold', color:COLORS.textDark}}>
-                            {selectedRentalForPayment.price.toLocaleString('tr-TR')} ₺
-                        </Text>
-                        
+                        <Text style={{textAlign:'center', fontSize:20, fontWeight:'bold', color:COLORS.textDark}}>{selectedRentalForPayment.price.toLocaleString('tr-TR')} ₺</Text>
                         <View style={{flexDirection:'row', justifyContent:'space-between', marginTop:15, padding:10, backgroundColor:'#F8F9FA', borderRadius:8}}>
                             <Text>Daha Önce Ödenen:</Text>
                             <Text style={{fontWeight:'bold'}}>{(selectedRentalForPayment.paidAmount||0).toLocaleString('tr-TR')} ₺</Text>
                         </View>
                         <View style={{flexDirection:'row', justifyContent:'space-between', marginTop:5, padding:10, backgroundColor:'#F8F9FA', borderRadius:8}}>
                             <Text>Kalan Tutar:</Text>
-                            <Text style={{fontWeight:'bold', color:COLORS.danger}}>
-                                {(selectedRentalForPayment.price - (selectedRentalForPayment.paidAmount||0)).toLocaleString('tr-TR')} ₺
-                            </Text>
+                            <Text style={{fontWeight:'bold', color:COLORS.danger}}>{(selectedRentalForPayment.price - (selectedRentalForPayment.paidAmount||0)).toLocaleString('tr-TR')} ₺</Text>
                         </View>
                     </View>
                 )}
-
-                {/* İŞLEM TÜRÜ SEÇİCİ */}
                 <View style={styles.toggleContainer}>
-                    <TouchableOpacity 
-                        style={[styles.toggleBtn, paymentType === 'COLLECT' && styles.toggleBtnActive]} 
-                        onPress={() => setPaymentType('COLLECT')}
-                    >
-                        <Text style={[styles.toggleText, paymentType === 'COLLECT' && styles.toggleTextActive]}>Tahsilat</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                        style={[styles.toggleBtn, paymentType === 'CORRECT' && styles.toggleBtnActiveRed]} 
-                        onPress={() => setPaymentType('CORRECT')}
-                    >
-                        <Text style={[styles.toggleText, paymentType === 'CORRECT' && styles.toggleTextActive]}>Düzeltme / İade</Text>
-                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.toggleBtn, paymentType === 'COLLECT' && styles.toggleBtnActive]} onPress={() => setPaymentType('COLLECT')}><Text style={[styles.toggleText, paymentType === 'COLLECT' && styles.toggleTextActive]}>Tahsilat</Text></TouchableOpacity>
+                    <TouchableOpacity style={[styles.toggleBtn, paymentType === 'CORRECT' && styles.toggleBtnActiveRed]} onPress={() => setPaymentType('CORRECT')}><Text style={[styles.toggleText, paymentType === 'CORRECT' && styles.toggleTextActive]}>Düzeltme / İade</Text></TouchableOpacity>
                 </View>
-
-                <Text style={styles.inputLabel}>
-                    {paymentType === 'COLLECT' ? 'Tahsil Edilecek Tutar' : 'Silinecek / İade Edilecek Tutar'}
-                </Text>
-                
+                <Text style={styles.inputLabel}>{paymentType === 'COLLECT' ? 'Tahsil Edilecek Tutar' : 'Silinecek / İade Edilecek Tutar'}</Text>
                 <View style={{flexDirection:'row', alignItems:'center', width:'100%'}}>
-                    <TextInput 
-                        style={[
-                            styles.input, 
-                            {flex:1, textAlign:'center', fontSize:24, fontWeight:'bold'},
-                            {color: paymentType === 'COLLECT' ? COLORS.success : COLORS.danger}
-                        ]} 
-                        value={paymentAmountInput}
-                        onChangeText={setPaymentAmountInput}
-                        keyboardType="numeric"
-                        autoFocus={true}
-                        placeholder="0"
-                    />
+                    <TextInput style={[styles.input, {flex:1, textAlign:'center', fontSize:24, fontWeight:'bold'}, {color: paymentType === 'COLLECT' ? COLORS.success : COLORS.danger}]} value={paymentAmountInput} onChangeText={setPaymentAmountInput} keyboardType="numeric" autoFocus={true} placeholder="0" />
                     <Text style={{fontSize:24, fontWeight:'bold', marginLeft:10, color:COLORS.textLight}}>₺</Text>
                 </View>
-
                 <View style={styles.modalActions}>
-                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setPaymentModalVisible(false)}>
-                        <Text style={styles.cancelBtnText}>İptal</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                        style={[styles.saveBtn, paymentType === 'CORRECT' && {backgroundColor: COLORS.danger}]} 
-                        onPress={handleSavePayment}
-                    >
-                        <Text style={styles.saveBtnText}>{paymentType === 'COLLECT' ? 'Kaydet' : 'Düzelt'}</Text>
-                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setPaymentModalVisible(false)}><Text style={styles.cancelBtnText}>İptal</Text></TouchableOpacity>
+                    <TouchableOpacity style={[styles.saveBtn, paymentType === 'CORRECT' && {backgroundColor: COLORS.danger}]} onPress={handleSavePayment}><Text style={styles.saveBtnText}>{paymentType === 'COLLECT' ? 'Kaydet' : 'Düzelt'}</Text></TouchableOpacity>
                 </View>
             </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* IBAN MODAL (Aynı) */}
+      {/* IBAN MODALI */}
       <Modal visible={ibanModalVisible} animationType="fade" transparent={true}>
-        {/* ... (Aynı) ... */}
         <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
                 <Text style={styles.modalTitle}>Ödeme Bilgileri</Text>
@@ -531,13 +541,12 @@ export default function RentalsScreen() {
             </View>
         </View>
       </Modal>
-
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  // ... (Mevcut stiller aynı) ...
+  // ... (STİLLER AYNI KALACAK, DEĞİŞİKLİK YOK) ...
   container: { flex: 1, backgroundColor: COLORS.background },
   headerContainer: { backgroundColor: COLORS.cardBg, padding: LAYOUT.padding, paddingBottom: 12, ...SHADOWS.light, zIndex: 1 },
   headerTop: { marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -547,7 +556,6 @@ const styles = StyleSheet.create({
   searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F2F2F7', borderRadius: 10, paddingHorizontal: 10, height: 40 },
   searchInput: { flex: 1, height: '100%', color: COLORS.textDark },
   listContent: { padding: LAYOUT.padding },
-  
   card: { backgroundColor: COLORS.cardBg, borderRadius: 12, padding: 16, marginBottom: 12, ...SHADOWS.light, borderLeftWidth: 5 },
   cardPaid: { borderLeftColor: COLORS.success },
   cardUnpaid: { borderLeftColor: COLORS.danger },
@@ -567,7 +575,7 @@ const styles = StyleSheet.create({
   cardFooter: { borderTopWidth: 1, borderTopColor: '#f0f0f0', paddingTop: 12 },
   actionButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 10, borderRadius: 8 },
   actionText: { fontWeight: '600', fontSize: 14, marginLeft: 6 },
-  completedBox: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 10 },
+  contactBtn: { width: 40, height: 40, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', padding: 16, paddingBottom: 30, borderTopWidth: 1, borderTopColor: '#ddd', ...SHADOWS.medium, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   selectionCountText: { fontSize: 16, fontWeight: 'bold', color: COLORS.textDark },
   bottomActions: { flexDirection: 'row' },
@@ -589,8 +597,6 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: '600' },
   copyButton: { flexDirection: 'row', backgroundColor: COLORS.primary, padding: 12, borderRadius: 8, width: '100%', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   closeButton: { padding: 10 },
-
-  // YENİ TOGGLE BUTON STİLLERİ
   toggleContainer: { flexDirection: 'row', backgroundColor: '#F2F2F7', borderRadius: 8, padding: 4, marginBottom: 20, width: '100%' },
   toggleBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
   toggleBtnActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
