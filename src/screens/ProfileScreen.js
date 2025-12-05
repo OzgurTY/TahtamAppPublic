@@ -1,7 +1,7 @@
-import React, { useContext, useState, useEffect } from 'react';
+import React, { useContext, useState } from 'react';
 import { 
   View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert, Modal, TextInput, StatusBar, ScrollView,
-  KeyboardAvoidingView, Platform, Switch // Switch Eklendi
+  KeyboardAvoidingView, Platform, Switch 
 } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
 import { logoutUser, updateUserProfile, deleteUserAccount } from '../services/authService';
@@ -16,11 +16,13 @@ export default function ProfileScreen() {
   const [formPhone, setFormPhone] = useState('');
   const [formIban, setFormIban] = useState('');
   
-  // YENİ: Bildirim Tercihi State'i
-  // Varsayılan olarak true (açık) kabul edelim, veritabanında yoksa true olsun
+  // YENİ: Komisyon State'i
+  const [formCommission, setFormCommission] = useState('');
+  
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
   const isOwner = userProfile?.role === 'OWNER';
+  const isManager = userProfile?.role === 'MARKET_MANAGER'; // YENİ ROL KONTROLÜ
 
   const handleLogout = () => {
     Alert.alert('Çıkış', 'Uygulamadan çıkmak istiyor musunuz?', [
@@ -42,10 +44,7 @@ export default function ProfileScreen() {
             try {
               await deleteUserAccount();
             } catch (error) {
-              Alert.alert(
-                "Hata", 
-                "Güvenlik gereği hesabınızı silmek için lütfen çıkış yapıp tekrar giriş yapın, ardından tekrar deneyin."
-              );
+              Alert.alert("Hata", "Güvenlik gereği hesabınızı silmek için lütfen çıkış yapıp tekrar giriş yapın.");
             }
           } 
         }
@@ -56,7 +55,8 @@ export default function ProfileScreen() {
   const openSettings = () => {
     setFormPhone(userProfile?.phone || '');
     setFormIban(userProfile?.iban || '');
-    // Profildeki ayarı al, yoksa varsayılan true olsun
+    // Komisyonu getir (yoksa varsayılan 10)
+    setFormCommission(userProfile?.commissionRate ? userProfile.commissionRate.toString() : '10');
     setNotificationsEnabled(userProfile?.notificationsEnabled !== false);
     setSettingsVisible(true);
   };
@@ -65,16 +65,24 @@ export default function ProfileScreen() {
     try {
       const updates = {
         phone: formPhone,
-        notificationsEnabled: notificationsEnabled // YENİ: Tercihi kaydet
+        notificationsEnabled: notificationsEnabled
       };
       
       if (isOwner) {
         updates.iban = formIban;
       }
 
+      // YENİ: Yönetici ise komisyonu kaydet
+      if (isManager) {
+        const rate = parseFloat(formCommission);
+        if (isNaN(rate) || rate < 0 || rate > 100) {
+            Alert.alert("Hata", "Geçerli bir komisyon oranı (0-100) giriniz.");
+            return;
+        }
+        updates.commissionRate = rate;
+      }
+
       await updateUserProfile(user.uid, updates);
-      
-      // Context'i güncelle
       setUserProfile({ ...userProfile, ...updates });
       
       setSettingsVisible(false);
@@ -89,6 +97,7 @@ export default function ProfileScreen() {
       case 'OWNER': return 'Tahta Sahibi';
       case 'TENANT': return 'Kiracı';
       case 'ADMIN': return 'Yönetici';
+      case 'MARKET_MANAGER': return 'Pazar Yöneticisi';
       default: return 'Kullanıcı';
     }
   };
@@ -113,8 +122,8 @@ export default function ProfileScreen() {
             </Text>
           </View>
           <Text style={styles.nameText}>{userProfile?.fullName}</Text>
-          <View style={[styles.roleBadge, { backgroundColor: isOwner ? '#E3F2FD' : '#F3E5F5' }]}>
-            <Text style={[styles.roleText, { color: isOwner ? COLORS.primary : COLORS.secondary }]}>
+          <View style={[styles.roleBadge, { backgroundColor: isOwner ? '#E3F2FD' : (isManager ? '#FFF3E0' : '#F3E5F5') }]}>
+            <Text style={[styles.roleText, { color: isOwner ? COLORS.primary : (isManager ? COLORS.warning : COLORS.secondary) }]}>
               {getRoleLabel(userProfile?.role)}
             </Text>
           </View>
@@ -161,9 +170,24 @@ export default function ProfileScreen() {
               </>
             )}
 
+            {/* YENİ: KOMİSYON GÖSTERİMİ */}
+            {isManager && (
+              <>
+                <View style={styles.divider} />
+                <View style={styles.infoRow}>
+                  <View style={styles.iconBox}>
+                    <Ionicons name="pie-chart" size={20} color={COLORS.primary} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Komisyon Oranı</Text>
+                    <Text style={styles.infoValue}>%{userProfile?.commissionRate || 10}</Text>
+                  </View>
+                </View>
+              </>
+            )}
+
             <View style={styles.divider} />
             
-            {/* BİLDİRİM DURUMU GÖSTERİMİ */}
             <View style={styles.infoRow}>
               <View style={styles.iconBox}>
                 <Ionicons name="notifications" size={20} color={COLORS.primary} />
@@ -185,7 +209,6 @@ export default function ProfileScreen() {
 
       </ScrollView>
 
-      {/* AYARLAR MODALI */}
       <Modal visible={settingsVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView 
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -224,9 +247,25 @@ export default function ProfileScreen() {
                       </>
                     )}
 
+                    {/* YENİ: KOMİSYON AYARI */}
+                    {isManager && (
+                      <>
+                        <Text style={styles.inputLabel}>Komisyon Oranı (%)</Text>
+                        <TextInput 
+                            style={styles.input}
+                            placeholder="10"
+                            value={formCommission}
+                            onChangeText={setFormCommission}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.helperText}>
+                          Yaptığınız kiralamalardan alacağınız hizmet bedeli yüzdesi.
+                        </Text>
+                      </>
+                    )}
+
                     <View style={styles.divider} />
                     
-                    {/* BİLDİRİM AYARI (SWITCH) */}
                     <Text style={styles.sectionHeader}>Uygulama Tercihleri</Text>
                     <View style={styles.switchRow}>
                         <View>
@@ -320,15 +359,15 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.textDark },
   
   sectionHeader: { fontSize: 16, fontWeight: '700', color: COLORS.primary, marginTop: 10, marginBottom: 10 },
-  inputLabel: { fontSize: 14, fontWeight: '600', color: COLORS.textDark, marginBottom: 8 },
-  input: { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 12, fontSize: 16, borderWidth: 1, borderColor: '#E9ECEF', marginBottom: 15 },
-  
-  // SWITCH STİLLERİ
+  inputLabel: { fontSize: 14, fontWeight: '600', color: COLORS.textDark, marginBottom: 8, marginTop: 10 },
+  input: { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 12, fontSize: 16, borderWidth: 1, borderColor: '#E9ECEF' },
+  helperText: { fontSize: 12, color: COLORS.textLight, marginTop: 6, fontStyle: 'italic' },
+
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15, paddingVertical: 5 },
   switchLabel: { fontSize: 16, fontWeight: '600', color: COLORS.textDark },
   switchSubLabel: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
 
-  modalActions: { flexDirection: 'row', marginTop: 20 },
+  modalActions: { flexDirection: 'row', marginTop: 30 },
   cancelBtn: { flex: 1, padding: 16, alignItems: 'center', marginRight: 12, backgroundColor: '#F5F5F5', borderRadius: 12 },
   saveBtn: { flex: 2, backgroundColor: COLORS.primary, padding: 16, borderRadius: 12, alignItems: 'center' },
   cancelBtnText: { color: COLORS.textLight, fontWeight: '700' },

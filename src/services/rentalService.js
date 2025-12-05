@@ -13,10 +13,10 @@ export const subscribeToRentalsByRole = (userId, role, callback) => {
   if (role === 'ADMIN') {
     q = query(collection(db, RENTALS_COLLECTION), orderBy('date', 'desc'));
   } else if (role === 'MARKET_MANAGER') {
-    // YENİ: Yönetici sadece kendi yönettiği (aracılık ettiği) işlemleri görür
+    // YENİ: Yönetici sadece kendi aracılık ettiği (managedId kendine eşit) işlemleri görür
     q = query(
       collection(db, RENTALS_COLLECTION), 
-      where('managerId', '==', userId), 
+      where('managerId', '==', userId),
       orderBy('date', 'desc')
     );
   } else if (role === 'OWNER') {
@@ -56,13 +56,13 @@ export const createRental = async (rentalsDataArray, userRole, managerId = null,
   rentalsDataArray.forEach(rental => {
     const docRef = doc(collection(db, RENTALS_COLLECTION));
     
+    // Varsayılan Değerler
     let rentalData = {
       ...rental,
       groupId: groupId,
       createdAt: new Date(),
       isPaid: false,
       paidAmount: 0,
-      // Varsayılan (Yöneticisiz) değerler
       isManaged: false,
       managerId: null,
       commissionRate: 0,
@@ -70,7 +70,7 @@ export const createRental = async (rentalsDataArray, userRole, managerId = null,
       ownerRevenue: rental.price // Varsayılan: Hepsi sahibin
     };
 
-    // EĞER MARKET YÖNETİCİSİ İSE KOMİSYON HESAPLA
+    // Eğer işlemi yapan MARKET_MANAGER ise
     if (userRole === 'MARKET_MANAGER' && managerId) {
         const commission = (rental.price * commissionRate) / 100;
         
@@ -78,7 +78,7 @@ export const createRental = async (rentalsDataArray, userRole, managerId = null,
         rentalData.managerId = managerId;
         rentalData.commissionRate = commissionRate;
         rentalData.commissionAmount = commission; // Yöneticinin Payı
-        rentalData.ownerRevenue = rental.price - commission; // Sahibin Payı (Net)
+        rentalData.ownerRevenue = rental.price - commission; // Sahibin Payı
     }
 
     batch.set(docRef, rentalData);
