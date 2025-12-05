@@ -12,6 +12,13 @@ export const subscribeToRentalsByRole = (userId, role, callback) => {
   let q;
   if (role === 'ADMIN') {
     q = query(collection(db, RENTALS_COLLECTION), orderBy('date', 'desc'));
+  } else if (role === 'MARKET_MANAGER') {
+    // YENİ: Yönetici sadece kendi yönettiği (aracılık ettiği) işlemleri görür
+    q = query(
+      collection(db, RENTALS_COLLECTION), 
+      where('managerId', '==', userId), 
+      orderBy('date', 'desc')
+    );
   } else if (role === 'OWNER') {
     q = query(collection(db, RENTALS_COLLECTION), where('ownerId', '==', userId), orderBy('date', 'desc'));
   } else {
@@ -40,21 +47,41 @@ export const subscribeToRentalsByDate = (marketId, dateString, callback) => {
   });
 };
 
-// --- İŞLEM FONKSİYONLARI ---
+// --- İŞLEM FONKSİYONLARI (KOMİSYON MANTIĞI EKLENDİ) ---
 
-export const createRental = async (rentalsDataArray) => {
+export const createRental = async (rentalsDataArray, userRole, managerId = null, commissionRate = 0) => {
   const batch = writeBatch(db);
   const groupId = rentalsDataArray.length > 1 ? `GROUP_${Date.now()}` : null;
 
   rentalsDataArray.forEach(rental => {
     const docRef = doc(collection(db, RENTALS_COLLECTION));
-    batch.set(docRef, {
+    
+    let rentalData = {
       ...rental,
       groupId: groupId,
       createdAt: new Date(),
       isPaid: false,
-      paidAmount: 0
-    });
+      paidAmount: 0,
+      // Varsayılan (Yöneticisiz) değerler
+      isManaged: false,
+      managerId: null,
+      commissionRate: 0,
+      commissionAmount: 0,
+      ownerRevenue: rental.price // Varsayılan: Hepsi sahibin
+    };
+
+    // EĞER MARKET YÖNETİCİSİ İSE KOMİSYON HESAPLA
+    if (userRole === 'MARKET_MANAGER' && managerId) {
+        const commission = (rental.price * commissionRate) / 100;
+        
+        rentalData.isManaged = true;
+        rentalData.managerId = managerId;
+        rentalData.commissionRate = commissionRate;
+        rentalData.commissionAmount = commission; // Yöneticinin Payı
+        rentalData.ownerRevenue = rental.price - commission; // Sahibin Payı (Net)
+    }
+
+    batch.set(docRef, rentalData);
   });
 
   await batch.commit();
@@ -82,111 +109,74 @@ export const deleteRentalGroup = async (groupId) => {
   await batch.commit();
 };
 
+// --- ÖDEME FONKSİYONLARI (BUCKET FILLING / SIRAYLA KAPATMA) ---
+
 export const addPayment = async (item, amountToAdd) => {
   try {
     const batch = writeBatch(db);
     const amount = parseFloat(amountToAdd);
 
     if (item.isGroup) {
-      // GRUP İŞLEMİ
       const q = query(collection(db, RENTALS_COLLECTION), where('groupId', '==', item.id));
       const snapshot = await getDocs(q);
-      
       if (snapshot.empty) return;
 
       const rentals = snapshot.docs.map(doc => ({ ref: doc.ref, ...doc.data() }));
 
-      if (amount > 0) {
-        // --- SENARYO 1: ÖDEME EKLEME (POZİTİF) ---
+      if (amount > 0) { // ÖDEME EKLEME
         let remaining = amount;
-
         for (const rental of rentals) {
-          if (remaining <= 0.01) break; // Para bittiyse dur
-
+          if (remaining <= 0.01) break;
           const currentPaid = rental.paidAmount || 0;
           const price = parseFloat(rental.price) || 0;
           const debt = price - currentPaid;
 
-          if (debt <= 0) continue; // Bu tahta zaten tam ödenmiş, sonrakine geç
-
-          let pay = 0;
-          // Borç kadarını mı ödeyelim, elimizdeki parayı mı?
-          if (remaining >= debt) {
-            pay = debt; // Borcu kapat
-          } else {
-            pay = remaining; // Paranın yettiği kadarını öde
-          }
+          if (debt <= 0) continue;
+          let pay = (remaining >= debt) ? debt : remaining;
 
           const newPaid = currentPaid + pay;
           const isFullyPaid = newPaid >= (price - 0.1);
-
-          batch.update(rental.ref, {
-            paidAmount: isFullyPaid ? price : newPaid,
-            isPaid: isFullyPaid
-          });
-
-          remaining -= pay; // Kullandığımız parayı düş
-        }
-
-      } else {
-        // --- SENARYO 2: DÜZELTME / İADE (NEGATİF) ---
-        let toDeduct = Math.abs(amount); // Düşülecek pozitif miktar (Örn: 500)
-
-        // İadelerde tersten gitmek (veya baştan gitmek) bir tercih meselesidir.
-        // Burada sırayla dolu olanlardan düşüyoruz.
-        for (const rental of rentals) {
-          if (toDeduct <= 0.01) break; // Düşülecek miktar bittiyse dur
-
-          const currentPaid = rental.paidAmount || 0;
           
-          if (currentPaid <= 0) continue; // Zaten ödenmemiş, bundan düşemeyiz
-
-          let deduct = 0;
-          // Bu tahtada düşecek kadar para var mı?
-          if (currentPaid >= toDeduct) {
-            deduct = toDeduct; // Hepsini buradan düşebiliriz
-          } else {
-            deduct = currentPaid; // Buradaki tüm parayı sıfırla, kalanı diğerinden düş
-          }
+          // Tam ödenirse küsuratı temizle (price yap)
+          batch.update(rental.ref, { 
+            paidAmount: isFullyPaid ? price : newPaid, 
+            isPaid: isFullyPaid 
+          });
+          remaining -= pay;
+        }
+      } else { // İADE (DÜZELTME)
+        let toDeduct = Math.abs(amount);
+        for (const rental of rentals) {
+          if (toDeduct <= 0.01) break;
+          const currentPaid = rental.paidAmount || 0;
+          if (currentPaid <= 0) continue;
+          let deduct = (currentPaid >= toDeduct) ? toDeduct : currentPaid;
 
           let newPaid = currentPaid - deduct;
           if (newPaid < 0) newPaid = 0;
-
           const price = parseFloat(rental.price) || 0;
-          // Para düştüğü için muhtemelen artık "Ödenmedi" olacak
           const isFullyPaid = newPaid >= (price - 0.1);
-
-          batch.update(rental.ref, {
-            paidAmount: newPaid,
-            isPaid: isFullyPaid
-          });
-
-          toDeduct -= deduct; // Düştüğümüz miktarı hedeften çıkar
+          batch.update(rental.ref, { paidAmount: newPaid, isPaid: isFullyPaid });
+          toDeduct -= deduct;
         }
       }
-
     } else {
-      // TEKLİ İŞLEM (Her zamanki gibi)
+      // TEKLİ
       const ref = doc(db, RENTALS_COLLECTION, item.id);
       const currentPaid = item.paidAmount || 0;
-      let newPaidAmount = currentPaid + amount; // Eksi gelirse düşer
-      
+      let newPaidAmount = currentPaid + amount;
       if (newPaidAmount < 0) newPaidAmount = 0;
-
+      
       const price = parseFloat(item.price) || 0;
       const isFullyPaid = newPaidAmount >= (price - 0.1);
-
-      batch.update(ref, {
-        paidAmount: isFullyPaid ? price : newPaidAmount,
-        isPaid: isFullyPaid
+      
+      batch.update(ref, { 
+        paidAmount: isFullyPaid ? price : newPaidAmount, 
+        isPaid: isFullyPaid 
       });
     }
-
     await batch.commit();
-  } catch (error) {
-    console.error("Ödeme işlemi hatası:", error);
-    throw error;
-  }
+  } catch (error) { console.error(error); throw error; }
 };
 
 export const toggleRentalPaymentStatus = async (rentalId, currentStatus) => {
@@ -212,24 +202,19 @@ export const markRentalsPaidBatch = async (rentalIds, isPaidStatus) => {
   await batch.commit();
 };
 
-// --- KRİTİK: BU FONKSİYONUN BURADA OLDUĞUNA EMİN OL ---
 export const checkAvailability = async (stallId, dateStrings) => {
   if (!dateStrings || dateStrings.length === 0) return [];
-  
   const sortedDates = [...dateStrings].sort();
   const startDate = sortedDates[0];
   const endDate = sortedDates[sortedDates.length - 1];
-  
   const q = query(
     collection(db, RENTALS_COLLECTION),
     where('stallId', '==', stallId),
     where('dateString', '>=', startDate),
     where('dateString', '<=', endDate)
   );
-  
   const snapshot = await getDocs(q);
   const existingRentals = snapshot.docs.map(doc => doc.data().dateString);
   const conflicts = existingRentals.filter(date => dateStrings.includes(date));
-  
   return conflicts; 
 };
