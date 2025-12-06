@@ -9,34 +9,30 @@ const USERS_COLLECTION = 'users';
 export const getDashboardStats = async (userId, role, referenceDate = new Date()) => {
   const targetDate = new Date(referenceDate);
   
-  // --- 1. ADMIN İSTATİSTİKLERİ ---
   let adminStats = {};
   if (role === 'ADMIN') {
-    // ... (Admin için sayımlar buraya, mevcut kodundaki gibi kalsın)
     const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
     const marketsSnap = await getDocs(collection(db, MARKETPLACES_COLLECTION));
     const stallsSnap = await getDocs(collection(db, STALLS_COLLECTION));
     const allRentalsSnap = await getDocs(collection(db, RENTALS_COLLECTION));
     let totalPlatformRevenue = 0;
-    allRentalsSnap.forEach(doc => { if (doc.data().isPaid) totalPlatformRevenue += (parseFloat(doc.data().price) || 0); });
+    allRentalsSnap.forEach(doc => {
+        if (doc.data().isPaid) totalPlatformRevenue += (parseFloat(doc.data().price) || 0);
+    });
     adminStats = { totalUsers: usersSnap.size, totalMarketplaces: marketsSnap.size, totalStalls: stallsSnap.size, totalPlatformRevenue };
   }
 
-  // --- 2. TARİH FİLTRELERİ ---
   const sixMonthsAgo = new Date(targetDate);
   sixMonthsAgo.setMonth(targetDate.getMonth() - 5);
   sixMonthsAgo.setDate(1);
 
   let q;
-  const commonFilters = [
-    where('date', '>=', sixMonthsAgo),
-    orderBy('date', 'asc')
-  ];
+  const commonFilters = [where('date', '>=', sixMonthsAgo), orderBy('date', 'asc')];
 
   if (role === 'ADMIN') {
     q = query(collection(db, RENTALS_COLLECTION), ...commonFilters);
   } else if (role === 'MARKET_MANAGER') {
-    // YENİ: Yönetici sadece kendi aracılık ettiği işlemleri görür
+    // YÖNETİCİ FİLTRESİ
     q = query(collection(db, RENTALS_COLLECTION), where('managerId', '==', userId), ...commonFilters);
   } else if (role === 'OWNER') {
     q = query(collection(db, RENTALS_COLLECTION), where('ownerId', '==', userId), ...commonFilters);
@@ -47,7 +43,7 @@ export const getDashboardStats = async (userId, role, referenceDate = new Date()
   const snapshot = await getDocs(q);
   const rentals = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 
-  // --- 3. HESAPLAMALAR ---
+  // İSTATİSTİKLER
   const targetYear = targetDate.getFullYear();
   const targetMonth = String(targetDate.getMonth() + 1).padStart(2, '0');
   const targetMonthKey = `${targetYear}-${targetMonth}`;
@@ -76,21 +72,15 @@ export const getDashboardStats = async (userId, role, referenceDate = new Date()
 
   rentals.forEach(rental => {
     const rentalDate = rental.date.toDate();
+    const amountFull = parseFloat(rental.price) || 0;
     
     // *** GELİR HESABI ***
-    const amountFull = parseFloat(rental.price) || 0;
     let amountToCount = amountFull;
-
     if (role === 'MARKET_MANAGER') {
-        // Yönetici için gelir = Komisyon
-        amountToCount = rental.commissionAmount || 0;
+        amountToCount = rental.commissionAmount || 0; // Yönetici -> Komisyon
     } else if (role === 'OWNER') {
-        // Sahip için gelir = Net Gelir (Eğer yönetici kesintisi varsa)
-        if (rental.isManaged) {
-            amountToCount = rental.ownerRevenue || 0;
-        } else {
-            amountToCount = amountFull;
-        }
+        if (rental.isManaged) amountToCount = rental.ownerRevenue || 0; // Sahip -> Net Gelir
+        else amountToCount = amountFull;
     }
 
     const y = rentalDate.getFullYear();
@@ -98,18 +88,9 @@ export const getDashboardStats = async (userId, role, referenceDate = new Date()
     const rentalMonthKey = `${y}-${m}`;
     const monthNameShort = rentalDate.toLocaleDateString('tr-TR', { month: 'short' });
 
-    if (chartDataMap[monthNameShort] !== undefined) {
-        chartDataMap[monthNameShort] += amountToCount;
-    }
-
-    if (rentalMonthKey === targetMonthKey) {
-      currentMonthTotal += amountToCount;
-      thisMonthCount++;
-    }
-
-    if (rentalMonthKey === prevMonthKey) {
-      lastMonthCount++;
-    }
+    if (chartDataMap[monthNameShort] !== undefined) chartDataMap[monthNameShort] += amountToCount;
+    if (rentalMonthKey === targetMonthKey) { currentMonthTotal += amountToCount; thisMonthCount++; }
+    if (rentalMonthKey === prevMonthKey) lastMonthCount++;
   });
 
   const chartData = {
@@ -117,18 +98,37 @@ export const getDashboardStats = async (userId, role, referenceDate = new Date()
     datasets: [{ data: orderedLabels.map(label => chartDataMap[label] || 0) }]
   };
 
-  // Potansiyel ciro (Sadece Owner için anlamlı, Manager için belki toplam pazar kapasitesi x komisyon olabilir ama şimdilik 0)
   let totalPotentialIncome = 0;
-  // ... (Owner potansiyel ciro hesabı mevcut koddaki gibi kalabilir)
+  if (role === 'OWNER') {
+    const year = targetDate.getFullYear();
+    const month = targetDate.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const dayCounts = { 'SUNDAY': 0, 'MONDAY': 0, 'TUESDAY': 0, 'WEDNESDAY': 0, 'THURSDAY': 0, 'FRIDAY': 0, 'SATURDAY': 0 };
+    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    for (let d = 1; d <= daysInMonth; d++) { dayCounts[dayNames[new Date(year, month, d).getDay()]]++; }
 
-  return {
-    role,
-    totalPotentialIncome,
-    currentMonthTotal,
-    activeRentalsCount: rentals.length,
-    thisMonthCount,
-    lastMonthCount, 
-    chartData,
-    ...adminStats
-  };
+    const marketsSnap = await getDocs(collection(db, MARKETPLACES_COLLECTION));
+    const markets = {};
+    marketsSnap.forEach(doc => markets[doc.id] = doc.data().openDays || []);
+
+    const stallsQuery = query(collection(db, STALLS_COLLECTION), where('ownerId', '==', userId));
+    const stallsSnap = await getDocs(stallsQuery);
+
+    stallsSnap.forEach(doc => {
+        const stall = doc.data();
+        const marketId = stall.marketplaceId;
+        const defaultPrice = parseFloat(stall.price) || 0;
+        if (markets[marketId]) {
+            const openDays = markets[marketId];
+            openDays.forEach(day => {
+                const countOfThatDay = dayCounts[day] || 0;
+                let dailyPrice = defaultPrice;
+                if (stall.prices && stall.prices[day]) dailyPrice = parseFloat(stall.prices[day]);
+                totalPotentialIncome += (dailyPrice * countOfThatDay);
+            });
+        }
+    });
+  }
+
+  return { role, totalPotentialIncome, currentMonthTotal, activeRentalsCount: rentals.length, thisMonthCount, lastMonthCount, chartData, ...adminStats };
 };

@@ -36,7 +36,10 @@ export default function StallsScreen({ route }) {
   const isOwner = userProfile?.role === 'OWNER';
   const isAdmin = userProfile?.role === 'ADMIN';
   const isTenant = userProfile?.role === 'TENANT';
-  const isManager = userProfile?.role === 'MARKET_MANAGER'; // YENİ ROL
+  const isManager = userProfile?.role === 'MARKET_MANAGER';
+
+  // YÖNETİM YETKİSİ: Admin, Sahip veya Yönetici
+  const canEdit = isAdmin || isOwner || isManager;
 
   // --- STATE ---
   const [marketplaces, setMarketplaces] = useState([]);
@@ -143,7 +146,6 @@ export default function StallsScreen({ route }) {
         // Eğer pazar varsa otomatik seç
         if (myMarket.length > 0) setSelectedMarketId(myMarket[0].id);
         else {
-            // Yöneticiye pazar atanmamışsa listeyi boşalt
              setMarketplaces([]); 
              setSelectedMarketId(null);
         }
@@ -155,11 +157,11 @@ export default function StallsScreen({ route }) {
     });
     const unsubTenant = subscribeToTenants(setTenants);
     return () => { unsubMarket(); unsubTenant(); }
-  }, [isManager, userProfile]); // Profil veya rol değişirse tekrar çalış
+  }, [isManager, userProfile]);
 
   useEffect(() => {
     if (selectedMarketId) {
-      // YÖNETİCİ İSE: Tüm tahtaları görmeli (filterOwnerId = null)
+      // YÖNETİCİ İSE: Tüm tahtaları görmeli
       // OWNER İSE: Sadece kendi tahtalarını görmeli
       // TENANT/ADMIN: Hepsini görür
       const filterOwnerId = (isOwner && !isManager) ? user.uid : null;
@@ -297,23 +299,17 @@ export default function StallsScreen({ route }) {
   };
 
   const handleStallPress = (stall) => {
-    if (!isMarketOpenToday) {
-        Alert.alert("Kapalı", "Bu pazar bugün kapalı olduğu için işlem yapılamaz.");
-        return;
-    }
-
+    if (!isMarketOpenToday) { Alert.alert("Kapalı", "Bu pazar bugün kapalı olduğu için işlem yapılamaz."); return; }
     if (isSelectionMode) {
         if (selectedStallIds.includes(stall.id)) setSelectedStallIds(selectedStallIds.filter(id => id !== stall.id));
         else setSelectedStallIds([...selectedStallIds, stall.id]);
         return;
     }
-
     const status = getStallStatus(stall.id);
     if (status.isOccupied) {
       Alert.alert(`${stall.stallNumber} - Dolu`, `Kiracı: ${status.tenantName}`, [
         { text: 'Kapat', style: 'cancel' },
-        // Yönetici de kiralama iptali yapabilir
-        (isAdmin || isOwner || isManager) ? { text: 'Kirayı İptal Et', style: 'destructive', onPress: () => deleteRental(status.rentalId) } : null
+        (canEdit) ? { text: 'Kirayı İptal Et', style: 'destructive', onPress: () => deleteRental(status.rentalId) } : null
       ].filter(Boolean));
     } else {
       prepareRentalModal(stall);
@@ -330,12 +326,9 @@ export default function StallsScreen({ route }) {
   const handleStallOptions = (stall) => {
     if (isTenant) return;
     if (isSelectionMode) return;
-
-    // YÖNETİCİ KISITLAMASI: Tahta ekleyemez/silemez/düzenleyemez
-    if (isManager) {
-        // Sadece bilgi amaçlı bir alert veya hiçbir şey yapma
-        return; 
-    }
+    
+    // GÜNCELLENDİ: Yönetici de tahta düzenleyebilir/silebilir
+    // if (isManager) return; // BU SATIR KALDIRILDI
 
     Alert.alert(`${stall.stallNumber} İşlemleri`, 'Seçiminiz:', [
       { text: 'Vazgeç', style: 'cancel' },
@@ -344,7 +337,6 @@ export default function StallsScreen({ route }) {
     ]);
   };
 
-  // --- KİRALAMA OLUŞTURMA (KOMİSYON DAHİL) ---
   const handleCreateRental = async () => {
     if (!isTenant && !selectedTenant) return Alert.alert('Hata', 'Lütfen bir kiracı seçin.');
     
@@ -354,7 +346,7 @@ export default function StallsScreen({ route }) {
     const rentalsPayload = [];
     const allChecks = [];
 
-    // Fiyat İndirimi (Yönetici indirim yapamaz, sadece liste fiyatı)
+    // İndirim: Sadece Owner ve Admin yapabilir (Manager yapamaz)
     const canSetPrice = (!isTenant && !isManager) && agreedTotalPrice && parseFloat(agreedTotalPrice) > 0;
     
     let discountRatio = 1;
@@ -365,7 +357,6 @@ export default function StallsScreen({ route }) {
     const tenantId = isTenant ? user.uid : selectedTenant?.id;
     const tenantName = isTenant ? userProfile.fullName : selectedTenant?.fullName;
     
-    // Yönetici Komisyonu
     const commissionRate = isManager ? (userProfile.commissionRate || 10) : 0;
 
     targetStallsList.forEach(stall => {
@@ -427,7 +418,7 @@ export default function StallsScreen({ route }) {
         const results = await Promise.all(allChecks);
         const errors = results.filter(r => r.conflicts.length > 0);
         if (errors.length > 0) {
-            const errorMsg = errors.map(e => `${e.stallNumber} nolu tahta şu tarihlerde dolu:\n${e.conflicts.join(', ')}`).join('\n\n');
+            const errorMsg = errors.map(e => `${e.stallNumber} dolu:\n${e.conflicts.join(', ')}`).join('\n\n');
             Alert.alert("Çakışma!", `İşlem iptal edildi.\n\n${errorMsg}`);
             return;
         }
@@ -437,19 +428,21 @@ export default function StallsScreen({ route }) {
             ? selectedWeekdays.map(d => SHORT_DAY_LABELS[d]).join(', ') 
             : SHORT_DAY_LABELS[ALL_DAYS[selectedDate.getDay()]];
 
-        Alert.alert('Kiralama Özeti', `${targetStallsList.length} Tahta\nGünler: ${dayNamesStr}\n\nToplam: ${totalAmount.toLocaleString('tr-TR')} ₺`, [
+        Alert.alert(
+          'Kiralama Özeti',
+          `${targetStallsList.length} Tahta\nGünler: ${dayNamesStr}\n\nToplam: ${totalAmount.toLocaleString('tr-TR')} ₺`,
+          [
             { text: 'İptal', style: 'cancel' },
             { text: 'Onayla', onPress: () => submitRentals(rentalsPayload, commissionRate) }
         ]);
     } catch (error) {
-        console.error("Müsaitlik Hatası Detayı:", error);
+        console.error("Müsaitlik Hatası:", error);
         Alert.alert("Hata", "Müsaitlik kontrolü yapılamadı.");
     }
   };
 
   const submitRentals = async (payload, commissionRate) => {
     try {
-      // Komisyon bilgisi servise gidiyor
       await createRental(payload, userProfile.role, user.uid, commissionRate);
       setRentalModalVisible(false);
       setIsSelectionMode(false);
@@ -481,11 +474,7 @@ export default function StallsScreen({ route }) {
         activeOpacity={0.7}
       >
         <View style={styles.cardRow}>
-          <View style={[
-              styles.stallIcon, 
-              status.isOccupied ? styles.iconOccupied : styles.iconEmpty,
-              isSelectionMode && isSelected && {backgroundColor: COLORS.primary}
-            ]}>
+          <View style={[styles.stallIcon, status.isOccupied ? styles.iconOccupied : styles.iconEmpty, isSelectionMode && isSelected && {backgroundColor: COLORS.primary}]}>
              {isSelectionMode ? (
                  <Ionicons name={isSelected ? "checkmark" : "ellipse-outline"} size={20} color={isSelected ? "#fff" : COLORS.textLight} />
              ) : (
@@ -515,8 +504,8 @@ export default function StallsScreen({ route }) {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Tahtalar</Text>
         <View style={{flexDirection:'row'}}>
-            {/* Sadece ADMIN veya OWNER Ekleme Yapabilir */}
-            {(isAdmin || isOwner) && (
+            {/* YÖNETİCİ DE EKLEME YAPABİLSİN (canEdit) */}
+            {canEdit && (
               <>
                 <TouchableOpacity style={[styles.actionButton, {backgroundColor: isSelectionMode ? COLORS.textDark : '#E5E5EA', marginRight: 8}]} onPress={() => {
                     if (isSelectionMode) { setIsSelectionMode(false); setSelectedStallIds([]); } 
@@ -531,15 +520,6 @@ export default function StallsScreen({ route }) {
                 )}
               </>
             )}
-            {/* Market Manager SADECE Seçim Yapabilir */}
-            {(isManager) && (
-                 <TouchableOpacity style={[styles.actionButton, {backgroundColor: isSelectionMode ? COLORS.textDark : '#E5E5EA'}]} onPress={() => {
-                    if (isSelectionMode) { setIsSelectionMode(false); setSelectedStallIds([]); } 
-                    else setIsSelectionMode(true);
-                }}>
-                    <Text style={[styles.actionButtonText, {color: isSelectionMode ? '#fff' : COLORS.textDark}]}>{isSelectionMode ? 'Vazgeç' : 'Seç'}</Text>
-                </TouchableOpacity>
-            )}
         </View>
       </View>
 
@@ -547,7 +527,6 @@ export default function StallsScreen({ route }) {
         <TouchableOpacity onPress={() => changeDate(-1)} style={styles.arrowBtn}>
           <Ionicons name="chevron-back" size={24} color={isMarketOpenToday ? COLORS.primary : COLORS.danger} />
         </TouchableOpacity>
-        
         <TouchableOpacity onPress={() => setCalendarVisible(true)} style={{alignItems: 'center', padding: 5}}>
           <View style={{flexDirection:'row', alignItems:'center'}}>
              <Text style={[styles.dateText, !isMarketOpenToday && {color: COLORS.danger}]}>{formatDateDisplay(selectedDate)}</Text>
@@ -555,7 +534,6 @@ export default function StallsScreen({ route }) {
           </View>
           <Text style={[styles.subDateText, !isMarketOpenToday && {color: COLORS.danger}]}>{isMarketOpenToday ? 'Pazar Açık' : 'PAZAR KAPALI'}</Text>
         </TouchableOpacity>
-
         <TouchableOpacity onPress={() => changeDate(1)} style={styles.arrowBtn}>
           <Ionicons name="chevron-forward" size={24} color={isMarketOpenToday ? COLORS.primary : COLORS.danger} />
         </TouchableOpacity>
@@ -679,8 +657,7 @@ export default function StallsScreen({ route }) {
                 <Text style={styles.priceLabel}>Liste Fiyatı:</Text>
                 <Text style={styles.priceValue}>{standardTotal.toLocaleString('tr-TR')} ₺</Text>
               </View>
-              
-              {/* YÖNETİCİ İNDİRİM YAPAMAZ, SADECE OWNER/ADMIN YAPAR */}
+              {/* İNDİRİM SADECE ADMIN/OWNER İÇİN */}
               {(!isTenant && !isManager) && (
                 <View style={styles.discountInputContainer}>
                     <Text style={styles.discountLabel}>Anlaşılan Tutar:</Text>
@@ -689,8 +666,6 @@ export default function StallsScreen({ route }) {
                 </View>
               )}
             </View>
-            
-            {/* KİRACI SEÇİMİ: YÖNETİCİ VE OWNER İÇİN AÇIK */}
             {!isTenant && (
                 <>
                     <TextInput style={[styles.input, {marginTop: 10}]} placeholder="Kiracı Ara..." placeholderTextColor={COLORS.textLight} value={searchTenantText} onChangeText={setSearchTenantText} />
