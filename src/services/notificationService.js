@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-// Bildirim Davranışı (Uygulama açıkken bildirim gelirse ne olsun?)
+// Bildirim Davranışı
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -42,6 +42,15 @@ export async function registerForPushNotificationsAsync() {
     // Token al
     try {
         const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId;
+        
+        // --- HATA DÜZELTMESİ ---
+        // Eğer projectId yoksa (EAS kurulu değilse) işlemi durdur, hata verme.
+        if (!projectId) {
+            console.log("EAS Project ID bulunamadı. Bildirim token'ı alınamıyor (Normal durum).");
+            return null;
+        }
+        // -----------------------
+
         token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
         console.log("Push Token:", token);
     } catch (e) {
@@ -54,7 +63,7 @@ export async function registerForPushNotificationsAsync() {
   return token;
 }
 
-// 2. Bildirim Gönder (Telefondan Telefona)
+// 2. Bildirim Gönder
 export async function sendPushNotification(expoPushToken, title, body) {
   if (!expoPushToken) return;
 
